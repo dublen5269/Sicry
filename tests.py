@@ -893,6 +893,32 @@ class TestSyncSicryDocs(unittest.TestCase):
         self.assertNotIn("raise_for_status", src,
                          "sync_sicry.py must not use raise_for_status() (causes double output)")
 
+    def test_no_hardcoded_tag_list_in_error(self):
+        """COSMETIC: 404 error must not contain a hardcoded tag list — must use live API."""
+        src = self._src()
+        self.assertNotIn('"v1.0.0, v1.0.1, v1.1.0, v1.1.1"', src,
+                         "404 error message must not embed a hardcoded tag list")
+        # The old hardcoded string literal must be gone from the 404 print statement
+        self.assertNotIn("v1.0.0, v1.0.1, v1.1.0, v1.1.1\"", src,
+                         "Hardcoded tag list must be replaced with live API lookup")
+
+    def test_live_tag_lookup_function(self):
+        """COSMETIC: sync_sicry.py must define _fetch_sicry_tags() for live tag lookup."""
+        src = self._src()
+        self.assertIn("_fetch_sicry_tags", src,
+                      "sync_sicry.py must have _fetch_sicry_tags() helper")
+        self.assertIn("SICRY_TAGS_API", src,
+                      "sync_sicry.py must define SICRY_TAGS_API constant")
+
+    def test_404_calls_live_lookup(self):
+        """COSMETIC: 404 handler must call _fetch_sicry_tags() to build the tag hint."""
+        src = self._src()
+        # The 404 block must reference the live lookup function, not a raw string literal
+        idx_404 = src.index("if r.status_code == 404")
+        snippet = src[idx_404:idx_404 + 400]
+        self.assertIn("_fetch_sicry_tags()", snippet,
+                      "404 handler must call _fetch_sicry_tags() for the live tag list")
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # v1.1.1 regression tests — 15 bug fixes
