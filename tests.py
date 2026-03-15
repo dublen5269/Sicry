@@ -923,6 +923,350 @@ class TestSKILLMDSyncDocs(unittest.TestCase):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# LLM backend tests — every provider + every code path (mocked, no credits needed)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _openai_mock_response(text: str) -> MagicMock:
+    """Build a mock openai chat-completions response."""
+    choice = MagicMock()
+    choice.message.content = text
+    resp = MagicMock()
+    resp.choices = [choice]
+    return resp
+
+
+class TestCallLLMOpenAI(unittest.TestCase):
+    """_call_llm() — openai provider."""
+
+    def test_openai_success(self):
+        """openai: returns LLM text on success."""
+        with patch.object(SICRY, "OPENAI_API_KEY", "sk-test"):
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.return_value = _openai_mock_response("ANALYSIS OK")
+            with patch("sicry.OpenAI", return_value=mock_client, create=True):
+                # patch at the module level where it's imported inside the function
+                import openai as _openai_module
+                with patch.object(_openai_module, "OpenAI", return_value=mock_client):
+                    result = SICRY._call_llm("openai", "sys", "prompt")
+        self.assertEqual(result, "ANALYSIS OK")
+
+    def test_openai_no_key_returns_error_string(self):
+        """openai: returns [SICRY: ...] string when key is missing — never raises."""
+        with patch.object(SICRY, "OPENAI_API_KEY", None):
+            result = SICRY._call_llm("openai", "sys", "prompt")
+        self.assertTrue(result.startswith("[SICRY:"))
+        self.assertIn("OPENAI_API_KEY", result)
+
+    def test_openai_exception_returns_error_string(self):
+        """openai: API exception is caught and returned as [SICRY:...] string."""
+        with patch.object(SICRY, "OPENAI_API_KEY", "sk-test"):
+            mock_client = MagicMock()
+            mock_client.chat.completions.create.side_effect = Exception("quota exceeded")
+            import openai as _openai_module
+            with patch.object(_openai_module, "OpenAI", return_value=mock_client):
+                result = SICRY._call_llm("openai", "sys", "prompt")
+        self.assertTrue(result.startswith("[SICRY:"))
+        self.assertIn("quota exceeded", result)
+
+
+class TestCallLLMOllama(unittest.TestCase):
+    """_call_llm() — ollama provider (local, no key)."""
+
+    def _post(self, url, **kwargs):
+        mock = MagicMock()
+        mock.status_code = 200
+        mock.json.return_value = {"response": "OLLAMA RESULT"}
+        mock.raise_for_status = MagicMock()
+        return mock
+
+    def test_ollama_success(self):
+        with patch("sicry.requests") as mock_req:
+            mock_req.post.side_effect = self._post
+            result = SICRY._call_llm("ollama", "sys", "prompt")
+        self.assertEqual(result, "OLLAMA RESULT")
+
+    def test_ollama_http_error_returns_error_string(self):
+        with patch("sicry.requests") as mock_req:
+            mock_req.post.return_value.raise_for_status.side_effect = Exception("conn refused")
+            result = SICRY._call_llm("ollama", "sys", "prompt")
+        self.assertTrue(result.startswith("[SICRY:"))
+
+
+class TestCallLLMLlamaCpp(unittest.TestCase):
+    """_call_llm() — llamacpp provider."""
+
+    def test_llamacpp_success(self):
+        with patch("sicry.requests") as mock_req:
+            resp = MagicMock()
+            resp.raise_for_status = MagicMock()
+            resp.json.return_value = {"choices": [{"message": {"content": "LLAMA RESULT"}}]}
+            mock_req.post.return_value = resp
+            result = SICRY._call_llm("llamacpp", "sys", "prompt")
+        self.assertEqual(result, "LLAMA RESULT")
+
+    def test_llamacpp_exception_returns_error_string(self):
+        with patch("sicry.requests") as mock_req:
+            mock_req.post.side_effect = Exception("server offline")
+            result = SICRY._call_llm("llamacpp", "sys", "prompt")
+        self.assertTrue(result.startswith("[SICRY:"))
+
+
+class TestCallLLMUnknown(unittest.TestCase):
+    """_call_llm() — unknown provider returns error string."""
+
+    def test_unknown_provider(self):
+        result = SICRY._call_llm("invalid_provider", "sys", "prompt")
+        self.assertTrue(result.startswith("[SICRY:"))
+        self.assertIn("Unknown LLM provider", result)
+        self.assertIn("invalid_provider", result)
+
+
+class TestAskFunction(unittest.TestCase):
+    """ask() — all modes, aliases, custom_instructions."""
+
+    def _mock_ask(self, expected_return="REPORT", **ask_kwargs):
+        with patch.object(SICRY, "_call_llm", return_value=expected_return) as m:
+            result = SICRY.ask("content text", **ask_kwargs)
+        return result, m
+
+    def test_threat_intel_mode(self):
+        result, mock_llm = self._mock_ask(query="ransomware", mode="threat_intel")
+        self.assertEqual(result, "REPORT")
+        _, system, prompt = mock_llm.call_args[0]
+        self.assertIn("Threat Intelligence", system)
+        self.assertIn("ransomware", prompt)
+
+    def test_ransomware_mode(self):
+        result, mock_llm = self._mock_ask(mode="ransomware")
+        _, system, _ = mock_llm.call_args[0]
+        self.assertIn("ransomware", system.lower())
+
+    def test_personal_identity_mode(self):
+        result, mock_llm = self._mock_ask(mode="personal_identity")
+        _, system, _ = mock_llm.call_args[0]
+        self.assertIn("Personal", system)
+
+    def test_corporate_mode(self):
+        result, mock_llm = self._mock_ask(mode="corporate")
+        _, system, _ = mock_llm.call_args[0]
+        self.assertIn("corporate", system.lower())
+
+    def test_mode_alias_ransomware_malware(self):
+        """ransomware_malware alias maps to ransomware prompt."""
+        _, m1 = self._mock_ask(mode="ransomware")
+        _, m2 = self._mock_ask(mode="ransomware_malware")
+        self.assertEqual(m1.call_args[0][1], m2.call_args[0][1])
+
+    def test_mode_alias_corporate_espionage(self):
+        """corporate_espionage alias maps to corporate prompt."""
+        _, m1 = self._mock_ask(mode="corporate")
+        _, m2 = self._mock_ask(mode="corporate_espionage")
+        self.assertEqual(m1.call_args[0][1], m2.call_args[0][1])
+
+    def test_unknown_mode_falls_back_to_threat_intel(self):
+        _, m1 = self._mock_ask(mode="threat_intel")
+        _, m2 = self._mock_ask(mode="nonexistent_mode")
+        self.assertEqual(m1.call_args[0][1], m2.call_args[0][1])
+
+    def test_custom_instructions_appended(self):
+        _, mock_llm = self._mock_ask(custom_instructions="focus on C2 infrastructure")
+        _, system, _ = mock_llm.call_args[0]
+        self.assertIn("focus on C2 infrastructure", system)
+
+    def test_empty_custom_instructions_not_appended(self):
+        _, m1 = self._mock_ask(mode="threat_intel", custom_instructions="")
+        _, m2 = self._mock_ask(mode="threat_intel")
+        # Systems should be identical when custom_instructions is blank
+        self.assertEqual(m1.call_args[0][1], m2.call_args[0][1])
+
+    def test_content_truncated_to_max_chars(self):
+        big_content = "X" * 99999
+        with patch.object(SICRY, "_call_llm", return_value="ok") as m:
+            SICRY.ask(big_content)
+        _, _, prompt = m.call_args[0]
+        self.assertLessEqual(len(prompt), SICRY.MAX_CONTENT_CHARS + 200)  # prompt overhead
+
+    def test_provider_override(self):
+        """ask() passes provider override through to _call_llm."""
+        with patch.object(SICRY, "_call_llm", return_value="ok") as m:
+            SICRY.ask("content", provider="ollama")
+        self.assertEqual(m.call_args[0][0], "ollama")
+
+    def test_returns_llm_error_string_not_exception(self):
+        """ask() must return error string, never raise."""
+        with patch.object(SICRY, "_call_llm", return_value="[SICRY: LLM call failed — boom]"):
+            result = SICRY.ask("content")
+        self.assertTrue(result.startswith("[SICRY:"))
+
+
+class TestRefineQueryLLM(unittest.TestCase):
+    """refine_query() — all code paths."""
+
+    def test_success_returns_refined(self):
+        with patch.object(SICRY, "_call_llm", return_value="ransomware leak"):
+            result = SICRY.refine_query("tell me about ransomware data breaches")
+        self.assertEqual(result, "ransomware leak")
+
+    def test_strips_whitespace(self):
+        with patch.object(SICRY, "_call_llm", return_value="  ransomware leak  "):
+            result = SICRY.refine_query("query")
+        self.assertEqual(result, "ransomware leak")
+
+    def test_llm_error_tag_falls_back_to_original(self):
+        """If _call_llm returns a [SICRY:...] error, original query is returned."""
+        with patch.object(SICRY, "_call_llm", return_value="[SICRY: OPENAI_API_KEY not set]"):
+            result = SICRY.refine_query("my original query")
+        self.assertEqual(result, "my original query")
+
+    def test_exception_falls_back_to_original(self):
+        with patch.object(SICRY, "_call_llm", side_effect=Exception("network error")):
+            result = SICRY.refine_query("my query")
+        self.assertEqual(result, "my query")
+
+    def test_provider_override(self):
+        with patch.object(SICRY, "_call_llm", return_value="refined") as m:
+            SICRY.refine_query("query", provider="ollama")
+        self.assertEqual(m.call_args[0][0], "ollama")
+
+
+class TestFilterResultsLLM(unittest.TestCase):
+    """filter_results() — all code paths."""
+
+    def _make_results(self, n: int) -> list[dict]:
+        return [{"title": f"Result {i}", "url": f"http://{i}.onion/", "engine": "Test"}
+                for i in range(1, n + 1)]
+
+    def test_empty_input_returns_empty(self):
+        result = SICRY.filter_results("query", [])
+        self.assertEqual(result, [])
+
+    def test_success_returns_selected_indices(self):
+        results = self._make_results(10)
+        # LLM picks indices 3, 7, 1
+        with patch.object(SICRY, "_call_llm", return_value="3,7,1"):
+            filtered = SICRY.filter_results("ransomware", results)
+        self.assertEqual(len(filtered), 3)
+        self.assertEqual(filtered[0]["title"], "Result 3")
+        self.assertEqual(filtered[1]["title"], "Result 7")
+        self.assertEqual(filtered[2]["title"], "Result 1")
+
+    def test_llm_error_tag_returns_top20(self):
+        results = self._make_results(30)
+        with patch.object(SICRY, "_call_llm", return_value="[SICRY: OPENAI_API_KEY not set]"):
+            filtered = SICRY.filter_results("query", results)
+        self.assertEqual(filtered, results[:20])
+
+    def test_duplicate_indices_deduped(self):
+        results = self._make_results(5)
+        with patch.object(SICRY, "_call_llm", return_value="1,1,2,2,3"):
+            filtered = SICRY.filter_results("query", results)
+        # Should have 3 unique results, not 5
+        urls = [r["url"] for r in filtered]
+        self.assertEqual(len(urls), len(set(urls)))
+        self.assertEqual(len(filtered), 3)
+
+    def test_out_of_range_indices_ignored(self):
+        results = self._make_results(5)
+        with patch.object(SICRY, "_call_llm", return_value="1,99,0,5"):
+            filtered = SICRY.filter_results("query", results)
+        # Only 1 and 5 are valid
+        self.assertEqual(len(filtered), 2)
+
+    def test_no_valid_indices_returns_top20(self):
+        results = self._make_results(25)
+        with patch.object(SICRY, "_call_llm", return_value="999,888,777"):
+            filtered = SICRY.filter_results("query", results)
+        self.assertEqual(filtered, results[:20])
+
+    def test_capped_at_20_results(self):
+        results = self._make_results(30)
+        all_indices = ",".join(str(i) for i in range(1, 31))
+        with patch.object(SICRY, "_call_llm", return_value=all_indices):
+            filtered = SICRY.filter_results("query", results)
+        self.assertLessEqual(len(filtered), 20)
+
+    def test_rate_limit_exception_triggers_truncated_retry(self):
+        results = self._make_results(5)
+        call_count = [0]
+        def side_effect(provider, system, prompt):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("rate limit exceeded")
+            return "1,2"
+        with patch.object(SICRY, "_call_llm", side_effect=side_effect):
+            filtered = SICRY.filter_results("query", results)
+        self.assertEqual(call_count[0], 2, "Should retry with truncated content")
+        self.assertEqual(len(filtered), 2)
+
+    def test_both_attempts_fail_returns_top20(self):
+        results = self._make_results(25)
+        with patch.object(SICRY, "_call_llm", side_effect=Exception("rate limit exceeded")):
+            filtered = SICRY.filter_results("query", results)
+        self.assertEqual(filtered, results[:20])
+
+    def test_non_rate_limit_exception_returns_top20_immediately(self):
+        results = self._make_results(25)
+        call_count = [0]
+        def side_effect(provider, system, prompt):
+            call_count[0] += 1
+            raise Exception("authentication failed")
+        with patch.object(SICRY, "_call_llm", side_effect=side_effect):
+            filtered = SICRY.filter_results("query", results)
+        self.assertEqual(call_count[0], 1, "Non-rate-limit error must NOT retry")
+        self.assertEqual(filtered, results[:20])
+
+    def test_provider_override_passed(self):
+        results = self._make_results(5)
+        with patch.object(SICRY, "_call_llm", return_value="1,2") as m:
+            SICRY.filter_results("query", results, provider="ollama")
+        self.assertEqual(m.call_args[0][0], "ollama")
+
+
+class TestSystemPrompts(unittest.TestCase):
+    """_SYSTEM_PROMPTS has all required modes and correct content."""
+
+    def test_all_modes_defined(self):
+        for mode in ("threat_intel", "ransomware", "personal_identity", "corporate"):
+            self.assertIn(mode, SICRY._SYSTEM_PROMPTS,
+                          f"Mode '{mode}' missing from _SYSTEM_PROMPTS")
+
+    def test_prompts_not_empty(self):
+        for mode, prompt in SICRY._SYSTEM_PROMPTS.items():
+            self.assertTrue(prompt.strip(), f"Prompt for '{mode}' is empty")
+
+    def test_prompts_mention_expert(self):
+        for mode, prompt in SICRY._SYSTEM_PROMPTS.items():
+            self.assertIn("Expert", prompt, f"Prompt for '{mode}' missing 'Expert' role")
+
+
+class TestGenerateFinalString(unittest.TestCase):
+    """_generate_final_string() used by filter_results."""
+
+    def test_basic_formatting(self):
+        results = [{"title": "Test Site", "url": "http://abc.onion/path", "engine": "X"}]
+        out = SICRY._generate_final_string(results)
+        self.assertIn("Test Site", out)
+        self.assertIn("abc.onion", out)
+
+    def test_truncate_mode_shortens_titles(self):
+        long_title = "A" * 200
+        results = [{"title": long_title, "url": "http://abc.onion/", "engine": "X"}]
+        out = SICRY._generate_final_string(results, truncate=True)
+        # In truncated mode, url is omitted and title is cut to 30 chars
+        self.assertNotIn("abc.onion", out)
+        self.assertLessEqual(len(out.split(".")[-1]), 40)  # rough check
+
+    def test_empty_results(self):
+        self.assertEqual(SICRY._generate_final_string([]), "")
+
+    def test_strips_non_alphanumeric_from_title(self):
+        results = [{"title": "Hello <World>!", "url": "http://x.onion/", "engine": "X"}]
+        out = SICRY._generate_final_string(results)
+        self.assertNotIn("<", out)
+        self.assertNotIn(">", out)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Runner
 # ═════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
