@@ -580,6 +580,58 @@ class TestCheckTor(unittest.TestCase):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 11b. check_update()
+# ═════════════════════════════════════════════════════════════════════════════
+class TestCheckUpdate(unittest.TestCase):
+    """check_update() — GitHub release version check."""
+
+    def _fake_response(self, tag="1.2.1", html_url="https://github.com/r"):
+        m = MagicMock()
+        m.json.return_value = {"tag_name": tag, "html_url": html_url}
+        m.raise_for_status = lambda: None
+        return m
+
+    def test_up_to_date_when_same_version(self):
+        with patch("sicry.requests.get", return_value=self._fake_response(SICRY.__version__)):
+            r = SICRY.check_update()
+        self.assertTrue(r["up_to_date"])
+        self.assertIsNone(r["error"])
+        self.assertEqual(r["current"], SICRY.__version__)
+
+    def test_not_up_to_date_on_newer_tag(self):
+        with patch("sicry.requests.get", return_value=self._fake_response("99.99.99")):
+            r = SICRY.check_update()
+        self.assertFalse(r["up_to_date"])
+        self.assertEqual(r["latest"], "99.99.99")
+        self.assertIsNotNone(r["url"])
+        self.assertIsNone(r["error"])
+
+    def test_up_to_date_on_older_tag(self):
+        with patch("sicry.requests.get", return_value=self._fake_response("0.0.1")):
+            r = SICRY.check_update()
+        self.assertTrue(r["up_to_date"])
+
+    def test_network_error_is_silent(self):
+        with patch("sicry.requests.get", side_effect=Exception("timeout")):
+            r = SICRY.check_update()
+        # Must NOT raise — must return a safe fallback dict
+        self.assertIsNotNone(r)
+        self.assertTrue(r["up_to_date"])  # safe default
+        self.assertIsNotNone(r["error"])
+
+    def test_return_keys_present(self):
+        with patch("sicry.requests.get", return_value=self._fake_response()):
+            r = SICRY.check_update()
+        for key in ("up_to_date", "current", "latest", "url", "error"):
+            self.assertIn(key, r, f"check_update() missing key '{key}'")
+
+    def test_github_releases_url_constant_exists(self):
+        self.assertTrue(hasattr(SICRY, "GITHUB_RELEASES_URL"),
+                        "GITHUB_RELEASES_URL constant missing from sicry.py")
+        self.assertIn("JacobJandon/OnionClaw", SICRY.GITHUB_RELEASES_URL)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 12. refine_query() fallback
 # ═════════════════════════════════════════════════════════════════════════════
 class TestRefineQuery(unittest.TestCase):
@@ -898,6 +950,16 @@ class TestPipelineFixes(unittest.TestCase):
         self.assertIn("skip 3/", src)
         self.assertIn("skip 5/", src)
         self.assertIn("skip 7/", src)
+
+    def test_check_update_flag_exists(self):
+        """pipeline.py must support --check-update flag."""
+        self.assertIn("--check-update", self._src())
+
+    def test_passive_update_notice_present(self):
+        """pipeline.py must print passive update notice when sicry.check_update() says so."""
+        src = self._src()
+        self.assertIn("check_update", src)
+        self.assertIn("up_to_date", src)
 
 
 class TestSetupPyAuthAndMCP(unittest.TestCase):
