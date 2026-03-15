@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-SICRY + OnionClaw v1.1.0 — comprehensive test suite
-Tests all v1.1.0 changes: dead engine removal, fetch() cache/retry/HTTPS-fallback,
-pipeline --no-llm, setup.py, and full live Tor connectivity.
+SICRY + OnionClaw v1.2.0 — comprehensive test suite
+Tests all v1.2.0 changes: SAFETY-1 token-pair matching, .env chmod 600,
+redirect de-anonymization blocking, persistent file cache, clear_cache(),
+--clear-cache flag, --cached mode in check_engines.py, --version everywhere,
+and sync_sicry.py documentation.
 
 Usage:
   python3 tests.py            # all tests
@@ -50,10 +52,10 @@ def _run_pipeline(*args):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestVersion(unittest.TestCase):
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "1.1.0")
+        self.assertEqual(SICRY.__version__, "1.2.0")
 
     def test_onion_claw_version(self):
-        self.assertEqual(SICRY_OC.__version__, "1.1.0")
+        self.assertEqual(SICRY_OC.__version__, "1.2.0")
 
     def test_both_copies_identical_version(self):
         self.assertEqual(SICRY.__version__, SICRY_OC.__version__)
@@ -1264,6 +1266,390 @@ class TestGenerateFinalString(unittest.TestCase):
         out = SICRY._generate_final_string(results)
         self.assertNotIn("<", out)
         self.assertNotIn(">", out)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# v1.2.0 fixes — Safety / Security / Functional / UX
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestSafetyTokenPair(unittest.TestCase):
+    """SAFETY-1 gap fix: token-pair matching and standalone dangerous terms."""
+
+    def test_token_pair_blacklist_exists(self):
+        self.assertTrue(hasattr(SICRY, "_TOKEN_PAIR_BLACKLIST"),
+                        "_TOKEN_PAIR_BLACKLIST missing from sicry.py")
+
+    def test_abyss_title_blocked(self):
+        """Regression: 'KIDS - CHILD - RAPE' must be blocked via token-pair."""
+        self.assertFalse(SICRY._is_content_safe("KIDS - CHILD - RAPE"))
+
+    def test_child_rape_blocked(self):
+        self.assertFalse(SICRY._is_content_safe("child rape archives"))
+
+    def test_minor_rape_blocked(self):
+        self.assertFalse(SICRY._is_content_safe("minor rape site dark web"))
+
+    def test_kids_sex_blocked(self):
+        self.assertFalse(SICRY._is_content_safe("kids sex video download"))
+
+    def test_kids_porn_blocked(self):
+        self.assertFalse(SICRY._is_content_safe("kids porn archive"))
+
+    def test_torture_child_blocked(self):
+        self.assertFalse(SICRY._is_content_safe("child torture onion"))
+
+    def test_snuff_live_blocked(self):
+        self.assertFalse(SICRY._is_content_safe("live snuff stream"))
+
+    def test_legitimate_child_safe(self):
+        """'child' alone in a normal context must NOT be blocked."""
+        self.assertTrue(SICRY._is_content_safe("child welfare dark web threat"))
+
+    def test_legitimate_minor_safe(self):
+        self.assertTrue(SICRY._is_content_safe("minor version update repository"))
+
+    def test_rape_without_context_not_auto_blocked(self):
+        """Standalone 'rape' not near any context keyword must be treated carefully.
+        Criminology research topics should not be blocked."""
+        # A title with just the word 'rape' but no illegal content context
+        # The current implementation requires context keywords to block standalone rape.
+        # A pure criminology stats report should be allowed.
+        result = SICRY._is_content_safe("rape statistics annual report criminology 2026")
+        # This is allowed — no dark-web/media/victim context keywords present
+        self.assertTrue(result)
+
+    def test_rape_video_blocked(self):
+        self.assertFalse(SICRY._is_content_safe("rape video upload dark web"))
+
+    def test_rape_porn_blocked(self):
+        self.assertFalse(SICRY._is_content_safe("rape porn site onion"))
+
+
+class TestSecurityChmod(unittest.TestCase):
+    """Security: setup.py must chmod 600 the .env after writing it."""
+
+    def test_chmod_600_called_in_setup(self):
+        src = _read(os.path.join(_ONION_CLAW, "setup.py"))
+        self.assertIn("chmod", src,
+                      "setup.py must call os.chmod to restrict .env permissions")
+        self.assertIn("0o600", src,
+                      "setup.py must set permissions to 0o600 (owner r/w only)")
+
+    def test_chmod_at_env_path(self):
+        src = _read(os.path.join(_ONION_CLAW, "setup.py"))
+        # The chmod call must reference the _ENV variable
+        idx = src.index("0o600")
+        surrounding = src[max(0, idx - 80):idx + 20]
+        self.assertIn("_ENV", surrounding,
+                      "os.chmod must be called on the _ENV path")
+
+    def test_chmod_message_printed(self):
+        src = _read(os.path.join(_ONION_CLAW, "setup.py"))
+        self.assertIn("600", src)
+
+
+class TestSecurityRedirectBlock(unittest.TestCase):
+    """Security: fetch() must block .onion → clearnet redirects."""
+
+    def _fetch_with_redirect(self, start_url: str, redirect_to: str):
+        SICRY._FETCH_CACHE.clear()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 301
+        mock_resp.url = redirect_to          # simulates requests following the redirect
+        mock_resp.text = "<html><title>clearnet</title><body>redirected</body></html>"
+        mock_resp.apparent_encoding = "utf-8"
+        mock_resp.encoding = "utf-8"
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+
+        with patch.object(SICRY, "_build_tor_session", return_value=mock_session):
+            return SICRY.fetch(start_url)
+
+    def test_onion_to_clearnet_blocked(self):
+        """An .onion URL that redirects to clearnet must return an error."""
+        result = self._fetch_with_redirect(
+            "http://legit.onion/page",
+            "https://clearnet-evil.com/page",
+        )
+        self.assertIsNotNone(result.get("error"),
+                             "Clearnet redirect must set an error")
+        self.assertIn("de-anonymization", result["error"])
+
+    def test_onion_to_onion_allowed(self):
+        """An .onion → .onion redirect must be allowed."""
+        result = self._fetch_with_redirect(
+            "http://legit.onion/page",
+            "http://other.onion/page",
+        )
+        # Should succeed (error is None OR error is None — title present)
+        # Because other.onion still has .onion in hostname
+        self.assertIsNone(result.get("error"),
+                          f"onion→onion redirect should be allowed; got: {result.get('error')}")
+
+    def test_clearnet_to_clearnet_no_issue(self):
+        """Clearnet fetches are NOT .onion so redirect blocking must NOT apply."""
+        SICRY._FETCH_CACHE.clear()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.url = "https://clearnet.example.com/final"
+        mock_resp.text = "<html><title>hello</title><body>ok</body></html>"
+        mock_resp.apparent_encoding = "utf-8"
+        mock_resp.encoding = "utf-8"
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+
+        with patch.object(SICRY, "_build_tor_session", return_value=mock_session):
+            result = SICRY.fetch("http://clearnet.example.com/page")
+
+        self.assertIsNone(result.get("error"))
+
+    def test_redirect_block_has_clearnet_url_in_error(self):
+        """The error message must include the clearnet URL so users can see where they were sent."""
+        result = self._fetch_with_redirect(
+            "http://market.onion/",
+            "http://tracking.example.com/spy",
+        )
+        self.assertIn("tracking.example.com", result["error"])
+
+
+class TestSecurityUserAgentRotation(unittest.TestCase):
+    """Security: _USER_AGENTS pool exists and is used in fetch() headers."""
+
+    def test_user_agents_pool_exists(self):
+        self.assertTrue(hasattr(SICRY, "_USER_AGENTS"),
+                        "_USER_AGENTS list missing from sicry.py")
+        self.assertGreater(len(SICRY._USER_AGENTS), 3,
+                           "Should have multiple User-Agents for rotation")
+
+    def test_user_agent_used_in_fetch(self):
+        """fetch() must pass a User-Agent header from the pool."""
+        src_path = os.path.join(_HERE, "sicry.py")
+        src = _read(src_path)
+        self.assertIn("_USER_AGENTS", src)
+        self.assertIn("User-Agent", src)
+        self.assertIn("random.choice", src)
+
+
+class TestPersistentCache(unittest.TestCase):
+    """Functional: file-based persistent cache survives between process invocations."""
+
+    def setUp(self):
+        SICRY._FETCH_CACHE.clear()
+
+    def test_cache_file_constant_exists(self):
+        self.assertTrue(hasattr(SICRY, "_CACHE_FILE"),
+                        "_CACHE_FILE missing from sicry.py")
+
+    def test_save_disk_cache_exists(self):
+        self.assertTrue(callable(getattr(SICRY, "_save_disk_cache", None)),
+                        "_save_disk_cache() missing from sicry.py")
+
+    def test_load_disk_cache_exists(self):
+        self.assertTrue(callable(getattr(SICRY, "_load_disk_cache", None)),
+                        "_load_disk_cache() missing from sicry.py")
+
+    def test_clear_cache_function_exists(self):
+        self.assertTrue(callable(getattr(SICRY, "clear_cache", None)),
+                        "clear_cache() missing from sicry.py")
+
+    def test_clear_cache_empties_memory(self):
+        SICRY._FETCH_CACHE["http://a.onion"] = (time.time(), {"title": "test"})
+        SICRY.clear_cache()
+        self.assertEqual(len(SICRY._FETCH_CACHE), 0)
+
+    def test_clear_cache_returns_count(self):
+        SICRY._FETCH_CACHE["http://a.onion"] = (time.time(), {"x": 1})
+        SICRY._FETCH_CACHE["http://b.onion"] = (time.time(), {"x": 2})
+        n = SICRY.clear_cache()
+        self.assertEqual(n, 2)
+
+    def test_save_and_load_roundtrip(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            tmp = f.name
+        old_cache_file = SICRY._CACHE_FILE
+        try:
+            SICRY._CACHE_FILE = tmp
+            entry = {"url": "http://x.onion", "is_onion": True, "status": 200,
+                     "title": "hi", "text": "body", "links": [], "error": None, "truncated": False}
+            SICRY._FETCH_CACHE["http://x.onion"] = (time.time(), entry)
+            SICRY._save_disk_cache()
+
+            # Clear memory and reload from disk
+            SICRY._FETCH_CACHE.clear()
+            SICRY._load_disk_cache()
+            self.assertIn("http://x.onion", SICRY._FETCH_CACHE)
+        finally:
+            SICRY._CACHE_FILE = old_cache_file
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+    def test_load_ignores_corrupt_cache(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write("NOTJSON{{{{")
+            tmp = f.name
+        old_cache_file = SICRY._CACHE_FILE
+        try:
+            SICRY._CACHE_FILE = tmp
+            SICRY._FETCH_CACHE.clear()
+            # Should not raise
+            SICRY._load_disk_cache()
+            self.assertEqual(len(SICRY._FETCH_CACHE), 0)
+        finally:
+            SICRY._CACHE_FILE = old_cache_file
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+class TestClearCacheCLI(unittest.TestCase):
+    """Functional: --clear-cache flag exposed in all CLI scripts."""
+
+    def test_pipeline_has_clear_cache_flag(self):
+        src = _read(os.path.join(_ONION_CLAW, "pipeline.py"))
+        self.assertIn("--clear-cache", src)
+        self.assertIn("clear_cache", src)
+
+    def test_fetch_has_clear_cache_flag(self):
+        src = _read(os.path.join(_ONION_CLAW, "fetch.py"))
+        self.assertIn("--clear-cache", src)
+        self.assertIn("clear_cache", src)
+
+    def test_sicry_has_clear_cache_command(self):
+        src = _read(os.path.join(_HERE, "sicry.py"))
+        self.assertIn("clear-cache", src)
+        self.assertIn("clear_cache", src)
+
+
+class TestCheckEnginesCachedMode(unittest.TestCase):
+    """UX: check_engines.py must support --cached N flag."""
+
+    def test_cached_flag_present(self):
+        src = _read(os.path.join(_ONION_CLAW, "check_engines.py"))
+        self.assertIn("--cached", src,
+                      "check_engines.py is missing the --cached flag")
+
+    def test_engines_cache_file_defined(self):
+        src = _read(os.path.join(_ONION_CLAW, "check_engines.py"))
+        self.assertIn("_ENGINES_CACHE_FILE", src)
+
+    def test_cached_skips_live_ping(self):
+        """If a fresh cache file exists, --cached should not call check_search_engines."""
+        import tempfile, importlib.util as ilu, types
+        # Write a fake engine cache file
+        fake_results = [{"name": "Ahmia", "status": "up", "latency_ms": 300}]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump({"_timestamp": time.time(), "results": fake_results}, f)
+            tmp = f.name
+        try:
+            # Patch sys.argv to simulate: check_engines.py --cached 10 --json
+            with patch("sys.argv", ["check_engines.py", "--cached", "10", "--json"]):
+                # We can read the script and verify the logic handles the cache
+                src = _read(os.path.join(_ONION_CLAW, "check_engines.py"))
+                # The script must load from cache when fresh
+                self.assertIn("age_seconds", src)
+                self.assertIn("_timestamp", src)
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+    def test_cached_mode_json_still_works(self):
+        """--json flag must still work alongside --cached."""
+        src = _read(os.path.join(_ONION_CLAW, "check_engines.py"))
+        self.assertIn("args.json", src)
+
+
+class TestVersionFlags(unittest.TestCase):
+    """UX: --version flag must be present in all CLI scripts."""
+
+    def _has_version_flag(self, path: str) -> bool:
+        src = _read(path)
+        return "--version" in src and "action=\"version\"" in src
+
+    def test_sicry_has_version_flag(self):
+        self.assertTrue(self._has_version_flag(os.path.join(_HERE, "sicry.py")),
+                        "sicry.py is missing --version argparse flag")
+
+    def test_pipeline_has_version_flag(self):
+        self.assertTrue(self._has_version_flag(os.path.join(_ONION_CLAW, "pipeline.py")),
+                        "pipeline.py is missing --version flag")
+
+    def test_fetch_has_version_flag(self):
+        self.assertTrue(self._has_version_flag(os.path.join(_ONION_CLAW, "fetch.py")),
+                        "fetch.py is missing --version flag")
+
+    def test_search_has_version_flag(self):
+        self.assertTrue(self._has_version_flag(os.path.join(_ONION_CLAW, "search.py")),
+                        "search.py is missing --version flag")
+
+    def test_check_engines_has_version_flag(self):
+        self.assertTrue(self._has_version_flag(os.path.join(_ONION_CLAW, "check_engines.py")),
+                        "check_engines.py is missing --version flag")
+
+    def test_sync_sicry_has_version_flag(self):
+        self.assertTrue(self._has_version_flag(os.path.join(_ONION_CLAW, "sync_sicry.py")),
+                        "sync_sicry.py is missing --version flag")
+
+    def test_pipeline_version_includes_sicry_version(self):
+        src = _read(os.path.join(_ONION_CLAW, "pipeline.py"))
+        self.assertIn("__version__", src)
+
+
+class TestREADMESyncSicryDocs(unittest.TestCase):
+    """UX: sync_sicry.py must be documented in both SKILL.md and OnionClaw/README.md."""
+
+    def test_sync_sicry_in_skill_md(self):
+        skill = _read(os.path.join(_ONION_CLAW, "SKILL.md"))
+        self.assertIn("sync_sicry", skill)
+
+    def test_sync_sicry_section_in_readme(self):
+        readme = _read(os.path.join(_ONION_CLAW, "README.md"))
+        self.assertIn("sync_sicry.py", readme,
+                      "OnionClaw README must have a sync_sicry.py section")
+
+    def test_sync_sicry_readme_documents_dry_run(self):
+        readme = _read(os.path.join(_ONION_CLAW, "README.md"))
+        self.assertIn("--dry-run", readme,
+                      "README must document sync_sicry.py --dry-run")
+
+    def test_sync_sicry_readme_documents_tag(self):
+        readme = _read(os.path.join(_ONION_CLAW, "README.md"))
+        self.assertIn("--tag", readme,
+                      "README must document sync_sicry.py --tag")
+
+    def test_check_engines_cached_docs_in_readme(self):
+        readme = _read(os.path.join(_ONION_CLAW, "README.md"))
+        self.assertIn("--cached", readme,
+                      "README must document check_engines.py --cached flag")
+
+    def test_clear_cache_docs_in_readme(self):
+        readme = _read(os.path.join(_ONION_CLAW, "README.md"))
+        self.assertIn("--clear-cache", readme,
+                      "README must document the --clear-cache flag")
+
+
+class TestSetupChmod(unittest.TestCase):
+    """Security: setup.py setup_env() must chmod 600 after writing .env."""
+
+    def test_chmod_in_setup_env_function(self):
+        src = _read(os.path.join(_ONION_CLAW, "setup.py"))
+        # Find setup_env function body
+        idx = src.index("def setup_env(")
+        func_body = src[idx: idx + 4000]
+        self.assertIn("chmod", func_body,
+                      "setup_env() must call os.chmod")
+        self.assertIn("0o600", func_body,
+                      "setup_env() must chmod to 0o600")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

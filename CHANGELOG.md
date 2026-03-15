@@ -7,6 +7,32 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
+## [1.2.0] — 2026-03-15
+
+### Added
+- **SAFETY-1 gap fix**: `_TOKEN_PAIR_BLACKLIST` token-pair matching in
+  `_is_content_safe()` — blocks evasive titles like “KIDS – CHILD – RAPE”
+  that bypassed single-phrase matching. Also added standalone dangerous terms
+  (rape video, torture porn, kids sex, child rape, etc.)
+- **Persistent fetch cache**: `_CACHE_FILE` (`/tmp/onionclaw_cache.json`) —
+  cache now survives between process restarts via `_save_disk_cache()` /
+  `_load_disk_cache()`. Override path with `SICRY_CACHE_FILE` env var.
+- **`clear_cache()` function**: wipes memory + disk cache; returns evicted count
+- **`clear-cache` CLI command**: `python sicry.py clear-cache`
+- **`--version` flag**: all CLI entry-points now respond to `--version`
+
+### Security
+- **Redirect de-anonymization blocked**: `fetch()` now detects when a `.onion`
+  request is silently redirected to a clearnet URL and returns an error dict
+  with `"de-anonymization"` in the message instead of leaking the request.
+- **User-Agent rotation confirmed** (already in v1.1.0, now explicitly tested)
+
+### Changed
+- `__version__` bumped to `1.2.0`
+- `_is_content_safe()` now also applies `_TOKEN_PAIR_BLACKLIST` after phrase match
+
+---
+
 ## [1.1.0] — 2026-03-15
 
 ### Added
