@@ -7,6 +7,28 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
+## [1.1.0] — 2026-03-15
+
+### Added
+- `fetch()` 10-minute TTL result cache (`_FETCH_CACHE`) controlled via
+  `SICRY_CACHE_TTL` env var (default 600 s; 0 = disabled)
+- `SICRY_CACHE_TTL` added to `.env.example`
+
+### Changed
+- `SEARCH_ENGINES` reduced from 18 to 12 — removed permanently-dead engines:
+  Torgle, Kaizer, Anima, Tornado, TorNet, FindTor (all offline as of 2026-Q1)
+- Docstring / comment counts updated: "18 engines" → "12 engines"
+
+### Fixed
+- `fetch()`: HTTPS → HTTP automatic fallback for `.onion` addresses
+  (most hidden services are HTTP-only; HTTPS fetch now retries as HTTP before
+  returning an error)
+- `fetch()`: SOCKS-level retry — rebuilds Tor session and retries once on
+  `SOCKS5`, `timed out`, or `ConnectionError` exceptions, then falls through
+  to the HTTP fallback variant if both attempts fail
+
+---
+
 ## [1.0.0] — 2026-03-14
 
 ### Added
