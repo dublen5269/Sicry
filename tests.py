@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SICRY + OnionClaw v1.2.2 — comprehensive test suite
-Tests all v1.2.2 changes: BUG-1 --check-update standalone, BUG-2 sync_sicry 404 fix,
+SICRY + OnionClaw v1.2.3 — comprehensive test suite
+Tests all v1.2.3 changes: BUG-1 renew.py --json guard, BUG-3 sync_sicry fetch order,
 redirect de-anonymization blocking, persistent file cache, clear_cache(),
 --clear-cache flag, --cached mode in check_engines.py, --version everywhere,
 and sync_sicry.py documentation.
@@ -52,10 +52,10 @@ def _run_pipeline(*args):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestVersion(unittest.TestCase):
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "1.2.2")
+        self.assertEqual(SICRY.__version__, "1.2.3")
 
     def test_onion_claw_version(self):
-        self.assertEqual(SICRY_OC.__version__, "1.2.2")
+        self.assertEqual(SICRY_OC.__version__, "1.2.3")
 
     def test_both_copies_identical_version(self):
         self.assertEqual(SICRY.__version__, SICRY_OC.__version__)
