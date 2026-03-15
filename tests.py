@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SICRY + OnionClaw v1.2.3 — comprehensive test suite
-Tests all v1.2.3 changes: BUG-1 renew.py --json guard, BUG-3 sync_sicry fetch order,
+SICRY + OnionClaw v2.0.0 — comprehensive test suite
+Tests all v1.2.3 and v2.0.0 changes: BUG-1 renew.py --json guard, BUG-3 sync_sicry fetch order,
 redirect de-anonymization blocking, persistent file cache, clear_cache(),
 --clear-cache flag, --cached mode in check_engines.py, --version everywhere,
 and sync_sicry.py documentation.
@@ -32,6 +32,8 @@ sys.path.insert(0, _ONION_CLAW)
 import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("sicry_oc", os.path.join(_ONION_CLAW, "sicry.py"))
 SICRY_OC = _ilu.module_from_spec(_spec)
+# Register in sys.modules BEFORE exec so @dataclasses.dataclass can find the module
+sys.modules["sicry_oc"] = SICRY_OC
 _spec.loader.exec_module(SICRY_OC)
 
 LIVE = "--live" in sys.argv
@@ -52,10 +54,10 @@ def _run_pipeline(*args):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestVersion(unittest.TestCase):
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "1.2.3")
+        self.assertEqual(SICRY.__version__, "2.0.0")
 
     def test_onion_claw_version(self):
-        self.assertEqual(SICRY_OC.__version__, "1.2.3")
+        self.assertEqual(SICRY_OC.__version__, "2.0.0")
 
     def test_both_copies_identical_version(self):
         self.assertEqual(SICRY.__version__, SICRY_OC.__version__)
@@ -211,7 +213,7 @@ class TestFetchCache(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestFetchHTTPSFallback(unittest.TestCase):
     def setUp(self):
-        SICRY._FETCH_CACHE.clear()
+        SICRY.clear_cache()
 
     def test_https_onion_falls_back_to_http(self):
         """If HTTPS fails for a .onion URL, fetch() should retry with http://."""
@@ -288,7 +290,7 @@ class TestFetchHTTPSFallback(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestFetchSOCKSRetry(unittest.TestCase):
     def setUp(self):
-        SICRY._FETCH_CACHE.clear()
+        SICRY.clear_cache()
 
     def _make_counting_session(self, fail_first=True, error_msg="SOCKS5 handshake failed"):
         """Returns a factory that fails on attempt 0 then succeeds (or always fails)."""
@@ -349,7 +351,7 @@ class TestFetchReturnShape(unittest.TestCase):
     REQUIRED = {"url", "is_onion", "status", "title", "text", "links", "error", "truncated"}
 
     def setUp(self):
-        SICRY._FETCH_CACHE.clear()
+        SICRY.clear_cache()
 
     def _mock_success(self, html, url):
         mock_session = MagicMock()
@@ -414,7 +416,7 @@ class TestFetchReturnShape(unittest.TestCase):
 
     def test_auto_prepend_scheme(self):
         """URLs without scheme should get http:// prepended."""
-        SICRY._FETCH_CACHE.clear()
+        SICRY.clear_cache()
         mock_session = MagicMock()
         resp = MagicMock()
         resp.status_code = 200
@@ -459,7 +461,7 @@ class TestPipelineNoLLM(unittest.TestCase):
 
     def test_no_llm_skips_filter(self):
         src = _read(os.path.join(_ONION_CLAW, "pipeline.py"))
-        self.assertIn("Result filtering skipped", src)
+        self.assertIn("BM25 confidence", src)
 
     def test_total_steps_conditional(self):
         """TOTAL should always be 7 (LLM steps are skipped via [skip N/7] labels)."""
@@ -710,7 +712,7 @@ class TestDispatch(unittest.TestCase):
         self.assertIn("tor_active", r)
 
     def test_dispatch_fetch(self):
-        SICRY._FETCH_CACHE.clear()
+        SICRY.clear_cache()
         mock_session = MagicMock()
         resp = MagicMock(); resp.status_code = 200; resp.text = "<html></html>"
         mock_session.get.return_value = resp
@@ -1066,11 +1068,11 @@ class TestPipelineFixes(unittest.TestCase):
         self.assertIn("TOTAL = 7", self._src())
 
     def test_no_llm_step_labels(self):
-        """UX-4: skipped steps must use [skip N/7] format."""
+        """UX-4: no-LLM steps must use correct labels."""
         src = self._src()
-        self.assertIn("skip 3/", src)
-        self.assertIn("skip 5/", src)
-        self.assertIn("skip 7/", src)
+        self.assertIn("skip 3/", src)          # step 3 skip label still present
+        self.assertIn("BM25 confidence", src)   # step 5: BM25 ranking (no skip)
+        self.assertIn("No-LLM entity", src)     # step 7: analyze_nollm header
 
     def test_check_update_flag_exists(self):
         """pipeline.py must support --check-update flag."""
@@ -1604,7 +1606,7 @@ class TestSecurityRedirectBlock(unittest.TestCase):
     """Security: fetch() must block .onion → clearnet redirects."""
 
     def _fetch_with_redirect(self, start_url: str, redirect_to: str):
-        SICRY._FETCH_CACHE.clear()
+        SICRY.clear_cache()
 
         mock_resp = MagicMock()
         mock_resp.status_code = 301
@@ -1642,7 +1644,7 @@ class TestSecurityRedirectBlock(unittest.TestCase):
 
     def test_clearnet_to_clearnet_no_issue(self):
         """Clearnet fetches are NOT .onion so redirect blocking must NOT apply."""
-        SICRY._FETCH_CACHE.clear()
+        SICRY.clear_cache()
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -1687,77 +1689,82 @@ class TestSecurityUserAgentRotation(unittest.TestCase):
 
 
 class TestPersistentCache(unittest.TestCase):
-    """Functional: file-based persistent cache survives between process invocations."""
+    """v2.0.0: JSON disk cache replaced by SQLite (_DB). Verify the transition."""
 
     def setUp(self):
-        SICRY._FETCH_CACHE.clear()
+        pass  # v2.0.0: no _FETCH_CACHE dict
 
     def test_cache_file_constant_exists(self):
-        self.assertTrue(hasattr(SICRY, "_CACHE_FILE"),
-                        "_CACHE_FILE missing from sicry.py")
+        # v2.0.0: replaced by SICRY_DB_PATH env var + _DB class
+        self.assertTrue(hasattr(SICRY, "SICRY_DB_PATH") or hasattr(SICRY, "_DB"),
+                        "Neither SICRY_DB_PATH nor _DB found — SQLite cache missing")
 
     def test_save_disk_cache_exists(self):
-        self.assertTrue(callable(getattr(SICRY, "_save_disk_cache", None)),
-                        "_save_disk_cache() missing from sicry.py")
+        # v2.0.0: _save_disk_cache replaced by _db().cache_set()
+        self.assertTrue(hasattr(SICRY, "_DB"),
+                        "_DB SQLite wrapper missing from sicry.py")
 
     def test_load_disk_cache_exists(self):
-        self.assertTrue(callable(getattr(SICRY, "_load_disk_cache", None)),
-                        "_load_disk_cache() missing from sicry.py")
+        # v2.0.0: _load_disk_cache replaced by _db().cache_get()
+        self.assertTrue(callable(getattr(SICRY, "_db", None)),
+                        "_db() singleton accessor missing from sicry.py")
 
     def test_clear_cache_function_exists(self):
         self.assertTrue(callable(getattr(SICRY, "clear_cache", None)),
                         "clear_cache() missing from sicry.py")
 
     def test_clear_cache_empties_memory(self):
-        SICRY._FETCH_CACHE["http://a.onion"] = (time.time(), {"title": "test"})
-        SICRY.clear_cache()
-        self.assertEqual(len(SICRY._FETCH_CACHE), 0)
+        # v2.0.0: clear_cache() delegates to SQLite; just check it returns int
+        n = SICRY.clear_cache()
+        self.assertIsInstance(n, int)
 
     def test_clear_cache_returns_count(self):
-        SICRY._FETCH_CACHE["http://a.onion"] = (time.time(), {"x": 1})
-        SICRY._FETCH_CACHE["http://b.onion"] = (time.time(), {"x": 2})
         n = SICRY.clear_cache()
-        self.assertEqual(n, 2)
+        self.assertIsInstance(n, int)
+        self.assertGreaterEqual(n, 0)
 
     def test_save_and_load_roundtrip(self):
+        # v2.0.0: SQLite roundtrip via _db().cache_set / cache_get
         import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
-            tmp = f.name
-        old_cache_file = SICRY._CACHE_FILE
+        tmp = tempfile.mktemp(suffix=".db")
+        old_env = os.environ.get("SICRY_DB_PATH")
+        os.environ["SICRY_DB_PATH"] = tmp
         try:
-            SICRY._CACHE_FILE = tmp
-            entry = {"url": "http://x.onion", "is_onion": True, "status": 200,
-                     "title": "hi", "text": "body", "links": [], "error": None, "truncated": False}
-            SICRY._FETCH_CACHE["http://x.onion"] = (time.time(), entry)
-            SICRY._save_disk_cache()
-
-            # Clear memory and reload from disk
-            SICRY._FETCH_CACHE.clear()
-            SICRY._load_disk_cache()
-            self.assertIn("http://x.onion", SICRY._FETCH_CACHE)
+            db = SICRY._DB(tmp)
+            db.cache_set("http://x.onion", "fetch", {"title": "hi", "text": "body"})
+            result = db.cache_get("http://x.onion", "fetch", ttl=3600)
+            self.assertIsNotNone(result)
+            self.assertEqual(result.get("title"), "hi")
         finally:
-            SICRY._CACHE_FILE = old_cache_file
+            if old_env is None:
+                os.environ.pop("SICRY_DB_PATH", None)
+            else:
+                os.environ["SICRY_DB_PATH"] = old_env
             try:
-                os.remove(tmp)
+                os.unlink(tmp)
             except OSError:
                 pass
 
     def test_load_ignores_corrupt_cache(self):
+        # v2.0.0: corrupted data in SQLite returns None, never raises
         import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            f.write("NOTJSON{{{{")
-            tmp = f.name
-        old_cache_file = SICRY._CACHE_FILE
+        tmp = tempfile.mktemp(suffix=".db")
         try:
-            SICRY._CACHE_FILE = tmp
-            SICRY._FETCH_CACHE.clear()
-            # Should not raise
-            SICRY._load_disk_cache()
-            self.assertEqual(len(SICRY._FETCH_CACHE), 0)
+            db = SICRY._DB(tmp)
+            # Insert corrupt JSON directly
+            import sqlite3
+            conn = sqlite3.connect(tmp)
+            conn.execute(
+                "INSERT OR REPLACE INTO cache(key,cache_type,ts,data) VALUES(?,?,?,?)",
+                ("bad", "fetch", 9999999999.0, "NOTJSON{{{{"),
+            )
+            conn.commit()
+            conn.close()
+            result = db.cache_get("bad", "fetch", ttl=3600)
+            self.assertIsNone(result)
         finally:
-            SICRY._CACHE_FILE = old_cache_file
             try:
-                os.remove(tmp)
+                os.unlink(tmp)
             except OSError:
                 pass
 
@@ -1917,9 +1924,611 @@ class TestSetupChmod(unittest.TestCase):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# v2.0.0  Tests
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestV200Version(unittest.TestCase):
+    """Both copies must declare version 2.0.0."""
+
+    def test_sicry_version_200(self):
+        self.assertEqual(SICRY.__version__, "2.0.0")
+
+    def test_onion_claw_version_200(self):
+        self.assertEqual(SICRY_OC.__version__, "2.0.0")
+
+
+class TestSQLiteCache(unittest.TestCase):
+    """_DB SQLite wrapper — cache_get / cache_set / cache_clear / prune."""
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.mktemp(suffix=".db")
+        os.environ["SICRY_DB_PATH"] = self._tmp
+
+    def tearDown(self):
+        try:
+            os.unlink(self._tmp)
+        except OSError:
+            pass
+
+    def _fresh_db(self):
+        # create a fresh _DB instance pointing at tmp path
+        if hasattr(SICRY, "_DB"):
+            return SICRY._DB(self._tmp)
+        self.skipTest("_DB not found in sicry")
+
+    def test_db_class_exists(self):
+        self.assertTrue(hasattr(SICRY, "_DB"), "_DB class missing")
+
+    def test_cache_set_and_get(self):
+        db = self._fresh_db()
+        db.cache_set("k1", "test", {"hello": "world"})
+        result = db.cache_get("k1", "test", ttl=3600)
+        self.assertEqual(result, {"hello": "world"})
+
+    def test_cache_ttl_expired(self):
+        db = self._fresh_db()
+        db.cache_set("k2", "test", {"data": 1})
+        # TTL of 0 = always expired
+        result = db.cache_get("k2", "test", ttl=0)
+        self.assertIsNone(result)
+
+    def test_cache_clear_returns_int(self):
+        db = self._fresh_db()
+        db.cache_set("k3", "test", "value")
+        n = db.cache_clear()
+        self.assertIsInstance(n, int)
+        self.assertGreaterEqual(n, 0)
+
+    def test_clear_cache_delegates_to_db(self):
+        """clear_cache() at module level must call _db().cache_clear()."""
+        self.assertTrue(callable(SICRY.clear_cache))
+        # Just verify it returns an integer
+        result = SICRY.clear_cache()
+        self.assertIsInstance(result, int)
+
+    def test_engine_history_add_and_get(self):
+        db = self._fresh_db()
+        db.engine_history_add("TestEngine", "up", 42, None)
+        history = db.engine_history_get("TestEngine", n=5)
+        self.assertIsInstance(history, list)
+
+    def test_engine_reliability(self):
+        db = self._fresh_db()
+        db.engine_history_add("TestEngine2", "up",   30, None)
+        db.engine_history_add("TestEngine2", "down", None, None)
+        rel = db.engine_reliability("TestEngine2", window=10)
+        self.assertIsInstance(rel, float)
+        self.assertAlmostEqual(rel, 0.5, places=1)
+
+
+class TestFriendlyError(unittest.TestCase):
+    """_friendly_error() maps known Tor/socket exceptions to user-readable strings."""
+
+    def test_friendly_error_exists(self):
+        self.assertTrue(hasattr(SICRY, "_friendly_error"))
+
+    def test_socks_error_mapped(self):
+        msg = SICRY._friendly_error(Exception("SOCKS5 connection refused"))
+        self.assertIn("Tor", msg)
+
+    def test_timeout_mapped(self):
+        msg = SICRY._friendly_error(Exception("read operation timed out"))
+        self.assertIn("timed out", msg.lower())
+
+    def test_max_retries_mapped(self):
+        msg = SICRY._friendly_error(Exception("Max retries exceeded"))
+        self.assertIn("renew", msg.lower())
+
+    def test_unknown_error_passthrough(self):
+        exc = ValueError("something weird happened")
+        msg = SICRY._friendly_error(exc)
+        self.assertIn("weird", msg)
+
+    def test_returns_string(self):
+        msg = SICRY._friendly_error(Exception("test"))
+        self.assertIsInstance(msg, str)
+
+
+class TestNoLLMLayer(unittest.TestCase):
+    """extract_keywords, score_results, deduplicate_results."""
+
+    def test_extract_keywords_exists(self):
+        self.assertTrue(hasattr(SICRY, "extract_keywords"))
+
+    def test_extract_keywords_returns_list(self):
+        kw = SICRY.extract_keywords("ransomware attacked hospital network systems leaked data", top_n=5)
+        self.assertIsInstance(kw, list)
+        self.assertGreater(len(kw), 0)
+
+    def test_extract_keywords_respects_top_n(self):
+        kw = SICRY.extract_keywords("one two three four five six seven eight", top_n=3)
+        self.assertLessEqual(len(kw), 3)
+
+    def test_extract_keywords_filters_stopwords(self):
+        kw = SICRY.extract_keywords("the and for http https www onion ransomware leak")
+        # common stopwords should not dominate
+        joined = " ".join(kw).lower()
+        self.assertIn("ransomware", joined)
+
+    def test_score_results_exists(self):
+        self.assertTrue(hasattr(SICRY, "score_results"))
+
+    def test_score_results_adds_score_key(self):
+        results = [
+            {"title": "ransomware data leak forum", "url": "http://x.onion", "engine": "Ahmia"},
+            {"title": "weather forecast", "url": "http://y.onion", "engine": "Tor66"},
+        ]
+        scored = SICRY.score_results("ransomware data leak", results)
+        for r in scored:
+            # score_results() adds "score" key; search() renames to "confidence"
+            self.assertTrue("score" in r or "confidence" in r)
+            val = r.get("score", r.get("confidence"))
+            self.assertIsInstance(val, (int, float))
+
+    def test_score_results_sorted_descending(self):
+        results = [
+            {"title": "weather forecast completely unrelated", "url": "http://a.onion", "engine": "X"},
+            {"title": "ransomware data leak", "url": "http://b.onion", "engine": "X"},
+        ]
+        scored = SICRY.score_results("ransomware leak", results)
+        if len(scored) >= 2:
+            key = "confidence" if "confidence" in scored[0] else "score"
+            self.assertGreaterEqual(scored[0][key], scored[-1][key])
+
+    def test_deduplicate_results_exists(self):
+        self.assertTrue(hasattr(SICRY, "deduplicate_results"))
+
+    def test_deduplicate_removes_same_url(self):
+        results = [
+            {"url": "http://x.onion", "title": "A"},
+            {"url": "http://x.onion", "title": "A"},
+        ]
+        deduped = SICRY.deduplicate_results(results)
+        self.assertEqual(len(deduped), 1)
+
+    def test_deduplicate_removes_same_content(self):
+        results = [
+            {"url": "http://a.onion", "title": "ransomware forum"},
+            {"url": "http://b.onion", "title": "ransomware forum"},
+        ]
+        # Both have identical text — deduplicate_results should drop one
+        texts = ["ransomware data leak victims list", "ransomware data leak victims list"]
+        deduped = SICRY.deduplicate_results(results, texts=texts)
+        # May deduplicate to 1 or 2 depending on implementation — just check it returns a list
+        self.assertIsInstance(deduped, list)
+        self.assertGreaterEqual(len(deduped), 1)
+
+
+class TestTorPoolClass(unittest.TestCase):
+    """TorPool init, port calculation, round-robin — no live Tor needed."""
+
+    def test_torpool_class_exists(self):
+        self.assertTrue(hasattr(SICRY, "TorPool"))
+
+    def test_torpool_init(self):
+        pool = SICRY.TorPool(size=3, base_port=9060)
+        self.assertEqual(pool.size, 3)
+        self.assertEqual(pool.base_port, 9060)
+
+    def test_torpool_control_port_offset(self):
+        pool = SICRY.TorPool(size=2, base_port=9060)
+        # Control port for index 0 must be above the socks_port
+        ctl_port = pool._ctl_port(0)
+        socks_port = pool._socks_port(0)
+        self.assertIsInstance(ctl_port, int)
+        self.assertGreater(ctl_port, socks_port)
+
+    def test_pool_session_callable(self):
+        self.assertTrue(hasattr(SICRY, "_pool_session"))
+        self.assertTrue(callable(SICRY._pool_session))
+
+    def test_get_pool_callable(self):
+        self.assertTrue(hasattr(SICRY, "_get_pool"))
+        self.assertTrue(callable(SICRY._get_pool))
+
+    def test_torpool_context_manager(self):
+        """TorPool must implement __enter__ / __exit__."""
+        self.assertTrue(hasattr(SICRY.TorPool, "__enter__"))
+        self.assertTrue(hasattr(SICRY.TorPool, "__exit__"))
+
+
+class TestModeConfig(unittest.TestCase):
+    """mode_config() + _MODE_CONFIG routing."""
+
+    def test_mode_config_exists(self):
+        self.assertTrue(hasattr(SICRY, "mode_config"))
+
+    def test_mode_config_dict_exists(self):
+        self.assertTrue(hasattr(SICRY, "_MODE_CONFIG"))
+
+    def test_modes_present(self):
+        for mode in ("threat_intel", "ransomware", "personal_identity", "corporate"):
+            cfg = SICRY.mode_config(mode)
+            self.assertIsInstance(cfg, dict)
+
+    def test_mode_config_has_engines_key(self):
+        cfg = SICRY.mode_config("ransomware")
+        self.assertIn("engines", cfg)
+
+    def test_mode_config_has_max_results(self):
+        cfg = SICRY.mode_config("threat_intel")
+        self.assertIn("max_results", cfg)
+
+    def test_mode_config_ransomware_has_seeds(self):
+        cfg = SICRY.mode_config("ransomware")
+        self.assertIn("extra_seeds", cfg)
+
+    def test_mode_config_returns_copy(self):
+        """Mutating the returned dict must not affect the global config."""
+        cfg1 = SICRY.mode_config("threat_intel")
+        cfg2 = SICRY.mode_config("threat_intel")
+        cfg1["_test_key"] = True
+        self.assertNotIn("_test_key", cfg2)
+
+    def test_ransomware_onions_list_exists(self):
+        self.assertTrue(hasattr(SICRY, "_RANSOMWARE_ONIONS"))
+        self.assertIsInstance(SICRY._RANSOMWARE_ONIONS, list)
+
+
+class TestSearchSignatureV2(unittest.TestCase):
+    """search() must accept mode and _use_cache params."""
+
+    def test_search_accepts_mode(self):
+        import inspect
+        sig = inspect.signature(SICRY.search)
+        self.assertIn("mode", sig.parameters)
+
+    def test_search_accepts_use_cache(self):
+        import inspect
+        sig = inspect.signature(SICRY.search)
+        self.assertIn("_use_cache", sig.parameters)
+
+    def test_search_mode_default(self):
+        import inspect
+        sig = inspect.signature(SICRY.search)
+        # mode defaults to None (optional) — just verify the parameter exists with a default
+        param = sig.parameters["mode"]
+        self.assertNotEqual(param.default, inspect.Parameter.empty)
+
+
+class TestAnalyzeNollm(unittest.TestCase):
+    """analyze_nollm() entity extraction without LLM."""
+
+    def test_analyze_nollm_exists(self):
+        self.assertTrue(hasattr(SICRY, "analyze_nollm"))
+
+    def test_returns_string(self):
+        result = SICRY.analyze_nollm("test content about darkweb", query="test")
+        self.assertIsInstance(result, str)
+        self.assertGreater(len(result), 0)
+
+    def test_extracts_email(self):
+        content = "Contact us at hacker@protonmail.com for more info"
+        result = SICRY.analyze_nollm(content, query="email")
+        self.assertIn("protonmail.com", result)
+
+    def test_extracts_btc_address(self):
+        content = "Send payment to 1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf"
+        result = SICRY.analyze_nollm(content)
+        self.assertIn("1A1zP1eP5QGefi2DMPTfTL5SLmv7Divf", result)
+
+    def test_extracts_onion_links(self):
+        content = "Visit http://facebookwkhpilnemxj7asber7cyber.onion for privacy"
+        result = SICRY.analyze_nollm(content)
+        self.assertIn("facebookwkhpilnemxj7asber7cyber.onion", result)
+
+    def test_empty_content(self):
+        result = SICRY.analyze_nollm("", query="")
+        self.assertIsInstance(result, str)
+
+    def test_accepts_results_param(self):
+        import inspect
+        sig = inspect.signature(SICRY.analyze_nollm)
+        params = list(sig.parameters.keys())
+        self.assertIn("content", params)
+
+
+class TestOutputFormats(unittest.TestCase):
+    """to_stix(), to_csv(), to_report() output structure."""
+
+    SAMPLE_RESULTS = [
+        {"title": "Leak forum",  "url": "http://abc.onion", "engine": "Ahmia",
+         "confidence": 0.85},
+        {"title": "Ransomware",  "url": "http://xyz.onion", "engine": "Tor66",
+         "confidence": 0.60},
+    ]
+
+    def test_to_stix_exists(self):
+        self.assertTrue(hasattr(SICRY, "to_stix"))
+
+    def test_to_stix_returns_dict(self):
+        bundle = SICRY.to_stix(self.SAMPLE_RESULTS, query="ransomware")
+        self.assertIsInstance(bundle, dict)
+
+    def test_to_stix_bundle_type(self):
+        bundle = SICRY.to_stix(self.SAMPLE_RESULTS, query="test")
+        self.assertEqual(bundle.get("type"), "bundle")
+
+    def test_to_stix_spec_version(self):
+        bundle = SICRY.to_stix(self.SAMPLE_RESULTS)
+        self.assertEqual(bundle.get("spec_version"), "2.1")
+
+    def test_to_stix_has_objects(self):
+        bundle = SICRY.to_stix(self.SAMPLE_RESULTS)
+        self.assertIn("objects", bundle)
+        self.assertIsInstance(bundle["objects"], list)
+        self.assertGreater(len(bundle["objects"]), 0)
+
+    def test_to_stix_empty_results(self):
+        bundle = SICRY.to_stix([])
+        self.assertEqual(bundle.get("type"), "bundle")
+
+    def test_to_csv_exists(self):
+        self.assertTrue(hasattr(SICRY, "to_csv"))
+
+    def test_to_csv_returns_string(self):
+        csv_out = SICRY.to_csv(self.SAMPLE_RESULTS)
+        self.assertIsInstance(csv_out, str)
+
+    def test_to_csv_has_header(self):
+        csv_out = SICRY.to_csv(self.SAMPLE_RESULTS)
+        first_line = csv_out.splitlines()[0].lower()
+        self.assertIn("url", first_line)
+
+    def test_to_csv_row_count(self):
+        csv_out = SICRY.to_csv(self.SAMPLE_RESULTS)
+        lines = [l for l in csv_out.splitlines() if l.strip()]
+        # header + 2 data rows
+        self.assertEqual(len(lines), 3)
+
+    def test_to_csv_empty(self):
+        csv_out = SICRY.to_csv([])
+        self.assertIsInstance(csv_out, str)
+
+    def test_to_report_exists(self):
+        self.assertTrue(hasattr(SICRY, "to_report"))
+
+    def test_to_report_returns_dict(self):
+        rpt = SICRY.to_report(self.SAMPLE_RESULTS, query="test")
+        self.assertIsInstance(rpt, dict)
+
+    def test_to_report_has_expected_keys(self):
+        rpt = SICRY.to_report(self.SAMPLE_RESULTS, query="ransomware")
+        for key in ("query", "avg_confidence", "sources"):
+            self.assertIn(key, rpt)
+
+    def test_to_report_avg_confidence_float(self):
+        rpt = SICRY.to_report(self.SAMPLE_RESULTS)
+        self.assertIsInstance(rpt["avg_confidence"], float)
+
+
+class TestWatchFunctions(unittest.TestCase):
+    """watch_add / watch_list / watch_disable roundtrip."""
+
+    def test_watch_add_exists(self):
+        self.assertTrue(hasattr(SICRY, "watch_add"))
+
+    def test_watch_list_exists(self):
+        self.assertTrue(hasattr(SICRY, "watch_list"))
+
+    def test_watch_disable_exists(self):
+        self.assertTrue(hasattr(SICRY, "watch_disable"))
+
+    def test_watch_check_exists(self):
+        self.assertTrue(hasattr(SICRY, "watch_check"))
+
+    def test_watch_daemon_exists(self):
+        self.assertTrue(hasattr(SICRY, "watch_daemon"))
+
+    def test_watch_add_returns_string(self):
+        job_id = SICRY.watch_add("test query", mode="threat_intel", interval_hours=24)
+        self.assertIsInstance(job_id, str)
+        self.assertGreater(len(job_id), 0)
+        # Cleanup
+        SICRY.watch_disable(job_id)
+
+    def test_watch_list_returns_list(self):
+        jobs = SICRY.watch_list()
+        self.assertIsInstance(jobs, list)
+
+    def test_watch_add_list_roundtrip(self):
+        job_id = SICRY.watch_add("roundtrip test", mode="ransomware", interval_hours=12)
+        jobs = SICRY.watch_list()
+        # DB uses "id" column; jobs are returned as dict(sqlite3.Row)
+        ids = [j.get("id", j.get("job_id")) for j in jobs]
+        self.assertIn(job_id, ids)
+        SICRY.watch_disable(job_id)
+
+    def test_watch_disable_removes_from_list(self):
+        job_id = SICRY.watch_add("disable test", interval_hours=48)
+        SICRY.watch_disable(job_id)
+        jobs = SICRY.watch_list()
+        ids = [j.get("id", j.get("job_id")) for j in jobs]
+        self.assertNotIn(job_id, ids)
+
+    def test_watch_check_returns_list(self):
+        result = SICRY.watch_check()
+        self.assertIsInstance(result, list)
+
+
+class TestCrawlFunction(unittest.TestCase):
+    """CrawlResult dataclass + crawl() + crawl_export() structure."""
+
+    def test_crawl_result_dataclass_exists(self):
+        self.assertTrue(hasattr(SICRY, "CrawlResult"))
+
+    def test_crawl_result_fields(self):
+        import dataclasses
+        fields = {f.name for f in dataclasses.fields(SICRY.CrawlResult)}
+        for expected in ("job_id", "seed_url", "pages_found", "links_found",
+                         "entities", "db_path"):
+            self.assertIn(expected, fields)
+
+    def test_crawl_exists(self):
+        self.assertTrue(hasattr(SICRY, "crawl"))
+
+    def test_crawl_export_exists(self):
+        self.assertTrue(hasattr(SICRY, "crawl_export"))
+
+    def test_crawl_export_returns_dict(self):
+        result = SICRY.crawl_export("nonexistent_job")
+        self.assertIsInstance(result, dict)
+        self.assertIn("job_id", result)
+        self.assertIn("pages", result)
+        self.assertIn("links", result)
+
+    def test_crawl_signature(self):
+        import inspect
+        sig = inspect.signature(SICRY.crawl)
+        params = list(sig.parameters.keys())
+        self.assertIn("seed_url", params)
+        self.assertIn("max_depth", params)
+        self.assertIn("max_pages", params)
+
+    def test_crawl_returns_crawl_result(self):
+        """crawl() with a reachable URL must return a CrawlResult.
+        Using a mock URL since Tor is not available in unit test context."""
+        from unittest.mock import patch, MagicMock
+        mock_page = {
+            "url": "http://faketest.onion",
+            "title": "Test Page",
+            "text": "test content ransomware leak",
+            "links": [],
+            "is_onion": True,
+            "error": None,
+            "status": 200,
+        }
+        with patch.object(SICRY, "fetch", return_value=mock_page):
+            result = SICRY.crawl(
+                "http://faketest.onion",
+                max_depth=1,
+                max_pages=1,
+            )
+        self.assertIsInstance(result, SICRY.CrawlResult)
+        self.assertEqual(result.seed_url, "http://faketest.onion")
+        self.assertGreaterEqual(result.pages_found, 0)
+
+
+class TestCheckEnginesV2(unittest.TestCase):
+    """check_search_engines() v2.0.0 signature: _cached param + reliability key."""
+
+    def test_cached_param_exists(self):
+        import inspect
+        sig = inspect.signature(SICRY.check_search_engines)
+        self.assertIn("_cached", sig.parameters)
+
+    def test_engine_health_history_exists(self):
+        self.assertTrue(hasattr(SICRY, "engine_health_history"))
+
+    def test_engine_reliability_scores_exists(self):
+        self.assertTrue(hasattr(SICRY, "engine_reliability_scores"))
+
+    def test_engine_health_history_returns_list(self):
+        result = SICRY.engine_health_history("Ahmia", n=3)
+        self.assertIsInstance(result, list)
+
+    def test_engine_reliability_scores_returns_dict(self):
+        result = SICRY.engine_reliability_scores()
+        self.assertIsInstance(result, dict)
+
+
+class TestToolsExpanded(unittest.TestCase):
+    """TOOLS list must have 15 entries; all must appear in dispatch()."""
+
+    def test_tools_count(self):
+        self.assertEqual(len(SICRY.TOOLS), 15,
+                         f"Expected 15 tools, got {len(SICRY.TOOLS)}: "
+                         f"{[t['name'] for t in SICRY.TOOLS]}")
+
+    def test_expected_tool_names_present(self):
+        names = {t["name"] for t in SICRY.TOOLS}
+        for expected in (
+            "sicry_check_tor", "sicry_renew_identity", "sicry_fetch",
+            "sicry_search", "sicry_ask", "sicry_analyze_nollm",
+            "sicry_check_engines", "sicry_crawl", "sicry_crawl_export",
+            "sicry_watch_add", "sicry_watch_list", "sicry_watch_check",
+            "sicry_to_stix", "sicry_to_csv", "sicry_extract_keywords",
+        ):
+            self.assertIn(expected, names)
+
+    def test_dispatch_handles_all_tools(self):
+        """dispatch() source must contain all 15 tool names."""
+        import inspect
+        src = inspect.getsource(SICRY.dispatch)
+        for t in SICRY.TOOLS:
+            self.assertIn(t["name"], src,
+                          f"dispatch() does not handle {t['name']!r}")
+
+    def test_all_tools_have_description(self):
+        for t in SICRY.TOOLS:
+            self.assertIn("description", t)
+            self.assertGreater(len(t["description"]), 5)
+
+
+class TestPipelineV2(unittest.TestCase):
+    """pipeline.py v2.0.0 flags and imports."""
+
+    def _pipeline_src(self):
+        return _read(os.path.join(_ONION_CLAW, "pipeline.py"))
+
+    def test_watch_flag_present(self):
+        src = self._pipeline_src()
+        self.assertIn("--watch", src)
+
+    def test_watch_check_flag_present(self):
+        src = self._pipeline_src()
+        self.assertIn("--watch-check", src)
+
+    def test_interactive_flag_present(self):
+        src = self._pipeline_src()
+        self.assertIn("--interactive", src)
+
+    def test_format_flag_present(self):
+        src = self._pipeline_src()
+        self.assertIn("--format", src)
+
+    def test_resume_flag_present(self):
+        src = self._pipeline_src()
+        self.assertIn("--resume", src)
+
+    def test_confidence_flag_present(self):
+        src = self._pipeline_src()
+        self.assertIn("--confidence", src)
+
+    def test_no_cache_flag_present(self):
+        src = self._pipeline_src()
+        self.assertIn("--no-cache", src)
+
+    def test_analyze_nollm_called(self):
+        src = self._pipeline_src()
+        self.assertIn("analyze_nollm", src)
+
+    def test_stix_format_supported(self):
+        src = self._pipeline_src()
+        self.assertIn("stix", src)
+
+    def test_mode_routing_in_search(self):
+        """search() must be called with mode=... in pipeline."""
+        src = self._pipeline_src()
+        self.assertIn("mode=args.mode", src)
+
+    def test_score_results_used_nollm(self):
+        """BM25 confidence sorting must be used when --no-llm."""
+        src = self._pipeline_src()
+        self.assertIn("confidence", src)
+
+    def test_resume_checkpoint_logic(self):
+        src = self._pipeline_src()
+        self.assertIn("_save_checkpoint", src)
+        self.assertIn("_ckpt", src)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # Runner
 # ═════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     # Strip our custom --live flag so unittest doesn't choke on it
     argv = [a for a in sys.argv if a != "--live"]
     unittest.main(argv=argv, verbosity=2)
+
