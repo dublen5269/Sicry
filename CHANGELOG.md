@@ -7,6 +7,34 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
+## [2.1.9] — 2026-03-16
+
+### Fixed
+- **[3]** `search_and_crawl()` now accepts and returns a `job_id` (auto-generated if
+  not supplied).  All concurrent crawls share this ID in the SQLite store, so the
+  result dict can be passed directly to `crawl_export()`, `to_stix()`, `to_misp()`,
+  or `to_csv()` without manual unpacking.
+- **[4]** `_DB.engine_reliability()` now applies **exponential time-decay** (48 h
+  half-life) in addition to Laplace smoothing.  A recent outage dents the score
+  even against weeks of clean history; the default window is widened from 5 to 20
+  checks.  Brand-new installs and long-running ones no longer look identical.
+
+### Improved
+- **[2]** `--watch-check` now shows a **Waiting jobs** section for every active job
+  that is not yet due, including `next=<timestamp>` so operators can confirm each
+  job is on schedule rather than guessing from absence.
+- **[1]** OnionClaw `CHANGELOG.md` retroactively filled in for all v2.x releases
+  (v2.0.0 – v2.1.8) plus the missing v1.1.1 and v1.2.3 entries.
+- **[5]** `.env.example` `SICRY_POOL_SIZE` guidance already added in v2.1.8;
+  documented here for completeness.
+- **[6]** `--watch-check --output-dir` test for an actually-due registered job added
+  to `tests.py` (`TestV219Fixes.test_watch_check_output_dir_due_job`).
+
+### Changed
+- `__version__` bumped to `2.1.9`.
+
+---
+
 ## [2.1.8] — 2026-03-16
 
 ### Fixed

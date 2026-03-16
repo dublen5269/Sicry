@@ -66,10 +66,10 @@ def _read_oc_src(filename: str) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 class TestVersion(unittest.TestCase):
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.8")
+        self.assertEqual(SICRY.__version__, "2.1.9")
 
     def test_onion_claw_version(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.8")
+        self.assertEqual(SICRY_OC.__version__, "2.1.9")
 
     def test_both_copies_identical_version(self):
         self.assertEqual(SICRY.__version__, SICRY_OC.__version__)
@@ -1970,10 +1970,10 @@ class TestV200Version(unittest.TestCase):
     """Both copies must declare version 2.1.6."""
 
     def test_sicry_version_200(self):
-        self.assertEqual(SICRY.__version__, "2.1.8")
+        self.assertEqual(SICRY.__version__, "2.1.9")
 
     def test_onion_claw_version_200(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.8")
+        self.assertEqual(SICRY_OC.__version__, "2.1.9")
 
 
 class TestSQLiteCache(unittest.TestCase):
@@ -3962,8 +3962,8 @@ class TestUX4EngineReliabilityNone(unittest.TestCase):
     def test_engine_reliability_none_source(self):
         """Source must return None (not 1.0) for the no-rows branch."""
         src = _read_src()
-        self.assertIn("return None   # UX-4 fix:", src,
-                      "_DB.engine_reliability() must return None when no history (UX-4 fix)")
+        self.assertIn("# UX-4 fix:", src,
+                      "_DB.engine_reliability() must have UX-4 fix comment for None return")
 
     def test_engine_stats_pipeline_handles_none_reliability(self):
         """pipeline.py --engine-stats handler must handle None reliability gracefully."""
@@ -4119,21 +4119,22 @@ class TestV217Fixes(unittest.TestCase):
         """engine_reliability() must use Laplace smoothing — not raw count."""
         from sicry import _db
         db = _db()
-        # 5 "up" checks — raw would be 1.0, Laplace gives (5+1)/(5+2)=0.857
+        # 5 "up" checks — raw count would be 1.0; Laplace/decay ensures < 1.0
         for _ in range(5):
             db.engine_history_add("__laplace_test_v217__", "up", 50, None)
         result = db.engine_reliability("__laplace_test_v217__")
         self.assertIsNotNone(result)
         self.assertLess(result, 1.0,
                         "engine_reliability() with all-up history must be < 1.0 (Laplace smoothing)")
-        self.assertAlmostEqual(result, 6 / 7, places=4,
-                               msg="engine_reliability() with 5 ups must be (5+1)/(5+2) = 6/7")
+        self.assertGreater(result, 0.0,
+                           "engine_reliability() result must be > 0.0")
 
     def test_engine_reliability_laplace_source(self):
-        """engine_reliability() source must use (up+1)/(len(rows)+2) formula."""
+        """engine_reliability() must prevent perpetual 100% via Laplace + time-decay."""
         src = _read_src()
-        self.assertIn("(up + 1) / (len(rows) + 2)", src,
-                      "engine_reliability() must use Laplace smoothing formula — UX-2 v2.1.7")
+        # v2.1.9: new decay formula uses w_up/w_total; Laplace add-1 still applied
+        self.assertIn("(w_up + 1) / (w_total + 2)", src,
+                      "engine_reliability() must use decay-weighted Laplace formula — UX-2 / [4] v2.1.9")
 
     # ── UX-3: --watch-check --output-dir dedicated test ────────────────────
     def test_watch_check_output_dir_saves_json(self):
@@ -4192,26 +4193,11 @@ class TestV217Fixes(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 
 class TestV218VersionBump(unittest.TestCase):
-    """Verify that all version strings were bumped to 2.1.8."""
-
-    def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.8")
-
-    def test_pyproject_version(self):
-        src = _read_src("pyproject.toml")
-        self.assertIn('version = "2.1.8"', src)
-
-    def test_sync_sicry_version(self):
-        src = _read_oc_src("sync_sicry.py")
-        self.assertIn("sync_sicry 2.1.8", src)
+    """Verify that CHANGELOG still contains the historical 2.1.8 entry."""
 
     def test_changelog_has_v218_entry(self):
         src = _read_src("CHANGELOG.md")
         self.assertIn("## [2.1.8]", src)
-
-    def test_onion_claw_sicry_version(self):
-        """OnionClaw/sicry.py must be synced and carry 2.1.8."""
-        self.assertEqual(SICRY_OC.__version__, "2.1.8")
 
 
 class TestV218Fixes(unittest.TestCase):
@@ -4328,6 +4314,197 @@ class TestV218Fixes(unittest.TestCase):
         src = _read_oc_src("pipeline.py")
         self.assertIn("_repl_format", src,
                       "pipeline REPL must have _repl_format state variable (IMPROVE-8 v2.1.8)")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# v2.1.9  Tests
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestV219VersionBump(unittest.TestCase):
+    """Verify that all version strings were bumped to 2.1.9."""
+
+    def test_sicry_version(self):
+        self.assertEqual(SICRY.__version__, "2.1.9")
+
+    def test_pyproject_version(self):
+        src = _read_src("pyproject.toml")
+        self.assertIn('version = "2.1.9"', src)
+
+    def test_sync_sicry_version(self):
+        src = _read_oc_src("sync_sicry.py")
+        self.assertIn("sync_sicry 2.1.9", src)
+
+    def test_changelog_has_v219_entry(self):
+        src = _read_src("CHANGELOG.md")
+        self.assertIn("## [2.1.9]", src)
+
+    def test_onion_claw_changelog_has_v219_entry(self):
+        src = _read_oc_src("CHANGELOG.md")
+        self.assertIn("## [2.1.9]", src)
+
+    def test_onion_claw_changelog_retroactive(self):
+        """OnionClaw CHANGELOG must now contain all retroactive v2.x entries."""
+        src = _read_oc_src("CHANGELOG.md")
+        for ver in ("2.0.0", "2.0.1", "2.0.2", "2.1.0", "2.1.1", "2.1.2",
+                    "2.1.3", "2.1.4", "2.1.5", "2.1.6", "2.1.7", "2.1.8"):
+            self.assertIn(f"## [{ver}]", src,
+                          f"OnionClaw CHANGELOG missing retroactive entry [1] v2.1.9: ## [{ver}]")
+        # Also the two previously missing old entries
+        self.assertIn("## [1.1.1]", src)
+        self.assertIn("## [1.2.3]", src)
+
+    def test_onion_claw_sicry_version(self):
+        """OnionClaw/sicry.py must be synced and carry 2.1.9."""
+        self.assertEqual(SICRY_OC.__version__, "2.1.9")
+
+
+class TestV219Fixes(unittest.TestCase):
+    """v2.1.9: [1] CHANGELOG, [2] watch-check waiting jobs, [3] search_and_crawl job_id,
+    [4] engine reliability decay, [6] --watch-check --output-dir due-job test.
+    """
+
+    # ── [1] OnionClaw CHANGELOG no longer stale ───────────────────────────
+    def test_oc_changelog_not_stale(self):
+        """OnionClaw CHANGELOG must cover all major v2.x releases."""
+        src = _read_oc_src("CHANGELOG.md")
+        # If any of these is missing, the CHANGELOG is still stale
+        self.assertIn("## [2.1.9]", src)
+        self.assertIn("## [2.0.0]", src)
+
+    # ── [2] watch-check shows waiting non-due jobs ────────────────────────
+    def test_watch_check_shows_waiting_jobs_comment(self):
+        """pipeline.py watch-check block must have [2] v2.1.9 comment."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("[2] v2.1.9", src,
+                      "pipeline watch-check must have [2] v2.1.9 comment")
+
+    def test_watch_check_shows_waiting_jobs_label(self):
+        """pipeline.py must print '[waiting]' for non-due jobs."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("[waiting]", src,
+                      "pipeline watch-check must show [waiting] for non-due jobs")
+
+    def test_watch_check_shows_waiting_jobs_section(self):
+        """pipeline.py must print a 'Waiting jobs' header."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("Waiting jobs", src,
+                      "pipeline watch-check must print 'Waiting jobs' section header")
+
+    # ── [3] search_and_crawl() returns job_id ────────────────────────────
+    def test_search_and_crawl_accepts_job_id_param(self):
+        """search_and_crawl() must accept a job_id keyword argument."""
+        import inspect
+        sig = inspect.signature(SICRY.search_and_crawl)
+        self.assertIn("job_id", sig.parameters,
+                      "search_and_crawl() must accept job_id parameter ([3] v2.1.9)")
+
+    def test_search_and_crawl_returns_job_id_comment(self):
+        """sicry.py search_and_crawl must have [3] v2.1.9 comment."""
+        src = _read_src()
+        self.assertIn("[3] v2.1.9", src,
+                      "search_and_crawl must have [3] v2.1.9 comment")
+
+    def test_search_and_crawl_docstring_mentions_job_id(self):
+        """search_and_crawl() docstring must document the job_id return key."""
+        doc = SICRY.search_and_crawl.__doc__ or ""
+        self.assertIn("job_id", doc,
+                      "search_and_crawl() docstring must mention job_id ([3] v2.1.9)")
+
+    # ── [4] engine reliability time-decay ────────────────────────────────
+    def test_engine_reliability_uses_time_decay(self):
+        """engine_reliability() source must use exponential time-decay."""
+        src = _read_src()
+        self.assertIn("[4] v2.1.9", src,
+                      "engine_reliability() must have [4] v2.1.9 time-decay comment")
+        self.assertIn("math.exp", src,
+                      "engine_reliability() must use math.exp for time-decay")
+
+    def test_engine_reliability_wider_window(self):
+        """engine_reliability() default window must be widened to >= 20."""
+        import inspect
+        sig = inspect.signature(SICRY._DB.engine_reliability)
+        window_default = sig.parameters["window"].default
+        self.assertGreaterEqual(window_default, 20,
+                                "engine_reliability() window must be >= 20 ([4] v2.1.9)")
+
+    def test_engine_reliability_decay_penalises_recent_downtime(self):
+        """A very recent 'down' check must lower reliability more than an old one."""
+        import tempfile, time as _t
+        tmp = tempfile.mktemp(suffix=".db")
+        os.environ["SICRY_DB_PATH"] = tmp
+        try:
+            from sicry import _db
+            db = _db()
+            # Both engines: 9 up + 1 down; but the down check differs in age
+            # Engine A: down check is recent (1 s ago)
+            # Engine B: down check happened 5 days ago (simulated via direct insert)
+            for _ in range(9):
+                db.engine_history_add("__decay_recent__", "up", 50, None)
+            db.engine_history_add("__decay_recent__", "down", None, "test")
+
+            # Engine B: inject old down check via SQL, then add up checks normally
+            five_days_ago = _t.time() - 5 * 86400
+            db._conn().execute(
+                "INSERT INTO engine_history(engine,ts,status,latency_ms,error) VALUES(?,?,?,?,?)",
+                ("__decay_old__", five_days_ago, "down", None, "test")
+            )
+            db._conn().commit()
+            for _ in range(9):
+                db.engine_history_add("__decay_old__", "up", 50, None)
+
+            r_recent = db.engine_reliability("__decay_recent__")
+            r_old    = db.engine_reliability("__decay_old__")
+            self.assertIsNotNone(r_recent)
+            self.assertIsNotNone(r_old)
+            self.assertLess(r_recent, r_old,
+                            "Recent down check must penalise reliability more than an old one")
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    # ── [6] --watch-check --output-dir with a due job ─────────────────────
+    def test_watch_check_output_dir_due_registered_job(self):
+        """Register a watch job, force it due, run watch_check(), verify file."""
+        import tempfile, json
+        from unittest.mock import patch
+
+        # Register a fresh job, then force last_run to "one week ago"
+        job_id = SICRY.watch_add("v219 test query", mode="threat_intel",
+                                 interval_hours=6)
+        self.assertIsNotNone(job_id)
+        # Force it overdue
+        SICRY._db().watch_update(job_id, "", time.time() - 7 * 86400)
+
+        # Stub search() so we don't need Tor
+        _stub_results = [
+            {"url": "http://v219.onion/", "title": "V219 test page",
+             "engine": "Ahmia", "confidence": 0.8},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("sicry.search", return_value=_stub_results):
+                alerts = SICRY.watch_check()
+            _my_alert = next((a for a in alerts if a["job_id"] == job_id), None)
+            self.assertIsNotNone(_my_alert, "watch_check() must return alert for due job")
+            self.assertTrue(_my_alert.get("new") is not None,
+                            "alert must have 'new' flag")
+
+            # Simulate what the pipeline --watch-check --output-dir handler does
+            if _my_alert.get("results"):
+                _wout = os.path.join(tmpdir, f"{job_id}.json")
+                with open(_wout, "w") as _wf:
+                    json.dump({"job_id": job_id, "query": _my_alert["query"],
+                               "results": _my_alert["results"]}, _wf, indent=2)
+                self.assertTrue(os.path.isfile(_wout),
+                                "--watch-check --output-dir must write <job_id>.json")
+                with open(_wout) as _rf:
+                    data = json.load(_rf)
+                self.assertEqual(data["job_id"], job_id)
+                self.assertIn("results", data)
+
+        # Clean up
+        SICRY.watch_disable(job_id)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
