@@ -7,6 +7,35 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
+## [2.1.8] — 2026-03-16
+
+### Fixed
+- **BUG-1** `crawl()` `links_found` was empty on shallow crawls (`max_depth=1`,
+  `max_pages=5`): URLs are now recorded into `links_found` **at dispatch time**
+  (when popped from the BFS queue into the worker batch), so every URL that
+  enters the executor is captured even if the fetch itself fails.
+
+### Improved
+- **UX-4** Interactive REPL drill-down (`> <url>`) now extracts structured entities
+  from the fetched page: e-mail addresses, `.onion` links, Bitcoin addresses, and
+  PGP-key presence are printed in a dedicated `── Extracted Entities ──` block
+  below the raw text preview.
+- **IMPROVE-1** `.env.example`: `SICRY_POOL_SIZE` now carries a multi-line comment
+  recommending 2–4 Tor circuits with RAM/resource guidance.
+- **IMPROVE-5** `--daemon-poll SECONDS` flag added to `pipeline.py watch-daemon`
+  subcommand; overrides the `--interval`-derived tick rate.
+- **IMPROVE-6** `--watch-clear-all` flag added to `pipeline.py` (and
+  `sicry.watch_clear_all()` / `_DB.watch_clear_all()`) to bulk-disable every
+  active watch job in one command.
+- **IMPROVE-7** Pipeline step 4 now prints the mode's seed onions
+  (`mode_config(mode)["extra_seeds"]`) so the user can see which entry-points
+  are being targeted.
+- **IMPROVE-8** Interactive REPL gains a `set format <fmt>` command
+  (`text` / `json` / `stix` / `misp` / `csv`); fetch drill-down respects the
+  chosen format.
+
+---
+
 ## [2.1.7] — 2026-03-16
 
 ### Fixed

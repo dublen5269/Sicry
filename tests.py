@@ -66,10 +66,10 @@ def _read_oc_src(filename: str) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 class TestVersion(unittest.TestCase):
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.7")
+        self.assertEqual(SICRY.__version__, "2.1.8")
 
     def test_onion_claw_version(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.7")
+        self.assertEqual(SICRY_OC.__version__, "2.1.8")
 
     def test_both_copies_identical_version(self):
         self.assertEqual(SICRY.__version__, SICRY_OC.__version__)
@@ -1970,10 +1970,10 @@ class TestV200Version(unittest.TestCase):
     """Both copies must declare version 2.1.6."""
 
     def test_sicry_version_200(self):
-        self.assertEqual(SICRY.__version__, "2.1.7")
+        self.assertEqual(SICRY.__version__, "2.1.8")
 
     def test_onion_claw_version_200(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.7")
+        self.assertEqual(SICRY_OC.__version__, "2.1.8")
 
 
 class TestSQLiteCache(unittest.TestCase):
@@ -4063,26 +4063,11 @@ class TestImprove1TorPoolNotice(unittest.TestCase):
 
 
 class TestV217VersionBump(unittest.TestCase):
-    """Verify that all version strings were bumped to 2.1.7."""
-
-    def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.7")
-
-    def test_pyproject_version(self):
-        src = _read_src("pyproject.toml")
-        self.assertIn('version = "2.1.7"', src)
-
-    def test_sync_sicry_version(self):
-        src = _read_oc_src("sync_sicry.py")
-        self.assertIn("sync_sicry 2.1.7", src)
+    """Verify that CHANGELOG still contains the 2.1.7 entry (historical)."""
 
     def test_changelog_has_v217_entry(self):
         src = _read_src("CHANGELOG.md")
         self.assertIn("## [2.1.7]", src)
-
-    def test_onion_claw_sicry_version(self):
-        """OnionClaw/sicry.py must be synced and carry 2.1.7."""
-        self.assertEqual(SICRY_OC.__version__, "2.1.7")
 
 
 class TestV217Fixes(unittest.TestCase):
@@ -4200,6 +4185,149 @@ class TestV217Fixes(unittest.TestCase):
                       "pipeline epilog must mention SICRY_POOL_SIZE (IMPROVE-1 v2.1.7)")
         self.assertIn(".env.example", src,
                       "pipeline epilog must reference .env.example for TorPool config")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# v2.1.8  Tests
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestV218VersionBump(unittest.TestCase):
+    """Verify that all version strings were bumped to 2.1.8."""
+
+    def test_sicry_version(self):
+        self.assertEqual(SICRY.__version__, "2.1.8")
+
+    def test_pyproject_version(self):
+        src = _read_src("pyproject.toml")
+        self.assertIn('version = "2.1.8"', src)
+
+    def test_sync_sicry_version(self):
+        src = _read_oc_src("sync_sicry.py")
+        self.assertIn("sync_sicry 2.1.8", src)
+
+    def test_changelog_has_v218_entry(self):
+        src = _read_src("CHANGELOG.md")
+        self.assertIn("## [2.1.8]", src)
+
+    def test_onion_claw_sicry_version(self):
+        """OnionClaw/sicry.py must be synced and carry 2.1.8."""
+        self.assertEqual(SICRY_OC.__version__, "2.1.8")
+
+
+class TestV218Fixes(unittest.TestCase):
+    """v2.1.8: BUG-1 dispatch-time links_found, UX-4 entity extraction,
+    IMPROVE-1 .env.example, IMPROVE-5 --daemon-poll, IMPROVE-6 --watch-clear-all,
+    IMPROVE-7 step-4 seed onions, IMPROVE-8 set format REPL.
+    """
+
+    # ── BUG-1: crawl() dispatch-time links_found ──────────────────────────
+    def test_crawl_links_found_dispatch_time_comment(self):
+        """crawl() batch-building inner loop must document dispatch-time recording."""
+        src = _read_src()
+        self.assertIn("BUG-1 v2.1.8", src,
+                      "crawl() batch loop must have BUG-1 v2.1.8 comment")
+
+    def test_crawl_links_found_dispatch_in_batch_loop(self):
+        """crawl() must record to links_found while building the batch (not only on success)."""
+        src = _read_src()
+        self.assertIn("links_found.append(_bc)", src,
+                      "crawl() batch loop must append _bc to links_found at dispatch time")
+
+    # ── UX-4: entity extraction in interactive REPL ───────────────────────
+    def test_interactive_entity_extraction_comment(self):
+        """pipeline.py interactive fetch must have UX-4 v2.1.8 comment."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("UX-4 v2.1.8", src,
+                      "pipeline interactive fetch must have UX-4 v2.1.8 comment")
+
+    def test_interactive_entity_extraction_emails(self):
+        """pipeline.py interactive fetch must extract e-mail addresses."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("_emails", src,
+                      "pipeline interactive fetch must extract emails")
+
+    def test_interactive_entity_extraction_onions(self):
+        """pipeline.py interactive fetch must extract .onion URLs."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("_onions", src,
+                      "pipeline interactive fetch must extract onion links")
+
+    def test_interactive_entity_extraction_btc(self):
+        """pipeline.py interactive fetch must extract BTC addresses."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("_btc", src,
+                      "pipeline interactive fetch must extract BTC addresses")
+
+    def test_interactive_entity_extraction_pgp(self):
+        """pipeline.py interactive fetch must detect PGP key blocks."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("BEGIN PGP", src,
+                      "pipeline interactive fetch must detect PGP blocks")
+
+    # ── IMPROVE-1: .env.example TorPool recommendation ────────────────────
+    def test_env_example_torpool_recommendation(self):
+        """.env.example must contain 2–4 TorPool circuit recommendation."""
+        src = _read_src(".env.example")
+        self.assertIn("2", src,
+                      ".env.example must mention 2-4 circuit recommendation (IMPROVE-1 v2.1.8)")
+        self.assertIn("SICRY_POOL_SIZE", src)
+
+    # ── IMPROVE-5: --daemon-poll argument ────────────────────────────────
+    def test_pipeline_has_daemon_poll_arg(self):
+        """pipeline.py must declare --daemon-poll argument."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("--daemon-poll", src,
+                      "pipeline must have --daemon-poll argument (IMPROVE-5 v2.1.8)")
+
+    def test_pipeline_daemon_uses_daemon_poll(self):
+        """pipeline.py watch-daemon handler must use args.daemon_poll when set."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("args.daemon_poll", src,
+                      "pipeline daemon handler must reference args.daemon_poll")
+
+    # ── IMPROVE-6: --watch-clear-all + watch_clear_all() ─────────────────
+    def test_pipeline_has_watch_clear_all_arg(self):
+        """pipeline.py must declare --watch-clear-all argument."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("--watch-clear-all", src,
+                      "pipeline must have --watch-clear-all argument (IMPROVE-6 v2.1.8)")
+
+    def test_sicry_has_watch_clear_all_function(self):
+        """sicry.py must expose a module-level watch_clear_all() function."""
+        self.assertTrue(callable(getattr(SICRY, "watch_clear_all", None)),
+                        "sicry must expose watch_clear_all() (IMPROVE-6 v2.1.8)")
+
+    def test_db_watch_clear_all_returns_int(self):
+        """_DB.watch_clear_all() must return an int (count of cleared jobs)."""
+        result = SICRY.watch_clear_all()
+        self.assertIsInstance(result, int,
+                              "watch_clear_all() must return int count")
+        self.assertGreaterEqual(result, 0,
+                                "watch_clear_all() count must be non-negative")
+        # Second call must return 0 — no active jobs remain
+        result2 = SICRY.watch_clear_all()
+        self.assertEqual(result2, 0,
+                         "watch_clear_all() on a second call must return 0 (IMPROVE-6 v2.1.8)")
+
+    # ── IMPROVE-7: step-4 seed onions ────────────────────────────────────
+    def test_pipeline_step4_seed_onions(self):
+        """pipeline.py step 4 must reference mode_config extra_seeds for printing."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("extra_seeds", src,
+                      "pipeline step-4 must print extra_seeds from mode_config (IMPROVE-7 v2.1.8)")
+
+    # ── IMPROVE-8: set format REPL command ───────────────────────────────
+    def test_pipeline_repl_has_set_format_command(self):
+        """pipeline.py interactive REPL must accept 'set format <fmt>' command."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("set format", src,
+                      "pipeline REPL must support set format command (IMPROVE-8 v2.1.8)")
+
+    def test_pipeline_repl_format_state_variable(self):
+        """pipeline.py interactive REPL must have _repl_format state variable."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("_repl_format", src,
+                      "pipeline REPL must have _repl_format state variable (IMPROVE-8 v2.1.8)")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
