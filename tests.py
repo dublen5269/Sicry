@@ -54,10 +54,10 @@ def _run_pipeline(*args):
 # ═════════════════════════════════════════════════════════════════════════════
 class TestVersion(unittest.TestCase):
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.0")
+        self.assertEqual(SICRY.__version__, "2.1.1")
 
     def test_onion_claw_version(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.0")
+        self.assertEqual(SICRY_OC.__version__, "2.1.1")
 
     def test_both_copies_identical_version(self):
         self.assertEqual(SICRY.__version__, SICRY_OC.__version__)
@@ -570,7 +570,8 @@ class TestCheckTor(unittest.TestCase):
         resp = MagicMock()
         resp.json.return_value = {"IsTor": True, "IP": "1.2.3.4"}
         mock_session.get.return_value = resp
-        with patch.object(SICRY, "_build_tor_session", return_value=mock_session):
+        with patch.object(SICRY, "_tor_port_open", return_value=True), \
+             patch.object(SICRY, "_build_tor_session", return_value=mock_session):
             r = SICRY.check_tor()
         self.assertTrue(r["tor_active"])
         self.assertEqual(r["exit_ip"], "1.2.3.4")
@@ -579,11 +580,38 @@ class TestCheckTor(unittest.TestCase):
     def test_failure_shape(self):
         mock_session = MagicMock()
         mock_session.get.side_effect = Exception("nope")
-        with patch.object(SICRY, "_build_tor_session", return_value=mock_session):
+        with patch.object(SICRY, "_tor_port_open", return_value=True), \
+             patch.object(SICRY, "_build_tor_session", return_value=mock_session):
             r = SICRY.check_tor()
         self.assertFalse(r["tor_active"])
         self.assertIsNone(r["exit_ip"])
         self.assertIsNotNone(r["error"])
+
+    def test_port_closed_returns_false_immediately(self):
+        """Regression: check_tor() must return tor_active=False when the SOCKS
+        port is not listening — no false positive after systemctl stop tor."""
+        with patch.object(SICRY, "_tor_port_open", return_value=False):
+            r = SICRY.check_tor()
+        self.assertFalse(r["tor_active"])
+        self.assertIsNone(r["exit_ip"])
+        self.assertIsNotNone(r["error"])
+        self.assertIn("not reachable", r["error"])
+
+    def test_port_closed_never_makes_network_request(self):
+        """When the port probe fails, no external HTTP request should be made."""
+        mock_session = MagicMock()
+        with patch.object(SICRY, "_tor_port_open", return_value=False), \
+             patch.object(SICRY, "_build_tor_session", return_value=mock_session):
+            SICRY.check_tor()
+        mock_session.get.assert_not_called()
+
+    def test_tor_port_open_helper_exists(self):
+        self.assertTrue(callable(SICRY._tor_port_open))
+
+    def test_tor_port_open_returns_bool(self):
+        # Port 1 is almost certainly closed; any result must be a bool
+        result = SICRY._tor_port_open(port=1, timeout=0.1)
+        self.assertIsInstance(result, bool)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1928,13 +1956,13 @@ class TestSetupChmod(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 
 class TestV200Version(unittest.TestCase):
-    """Both copies must declare version 2.1.0."""
+    """Both copies must declare version 2.1.1."""
 
     def test_sicry_version_200(self):
-        self.assertEqual(SICRY.__version__, "2.1.0")
+        self.assertEqual(SICRY.__version__, "2.1.1")
 
     def test_onion_claw_version_200(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.0")
+        self.assertEqual(SICRY_OC.__version__, "2.1.1")
 
 
 class TestSQLiteCache(unittest.TestCase):
