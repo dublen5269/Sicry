@@ -66,10 +66,10 @@ def _read_oc_src(filename: str) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 class TestVersion(unittest.TestCase):
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.11")
+        self.assertEqual(SICRY.__version__, "2.1.12")
 
     def test_onion_claw_version(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.11")
+        self.assertEqual(SICRY_OC.__version__, "2.1.12")
 
     def test_both_copies_identical_version(self):
         self.assertEqual(SICRY.__version__, SICRY_OC.__version__)
@@ -1973,10 +1973,10 @@ class TestV200Version(unittest.TestCase):
     """Both copies must declare version 2.1.6."""
 
     def test_sicry_version_200(self):
-        self.assertEqual(SICRY.__version__, "2.1.11")
+        self.assertEqual(SICRY.__version__, "2.1.12")
 
     def test_onion_claw_version_200(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.11")
+        self.assertEqual(SICRY_OC.__version__, "2.1.12")
 
 
 class TestSQLiteCache(unittest.TestCase):
@@ -4587,18 +4587,7 @@ class TestV2110Fixes(unittest.TestCase):
 # ═════════════════════════════════════════════════════════════════════════════
 
 class TestV211VersionBump(unittest.TestCase):
-    """Verify that all version strings were bumped to 2.1.11."""
-
-    def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.11")
-
-    def test_pyproject_version(self):
-        src = _read_src("pyproject.toml")
-        self.assertIn('version = "2.1.11"', src)
-
-    def test_sync_sicry_version(self):
-        src = _read_oc_src("sync_sicry.py")
-        self.assertIn("sync_sicry 2.1.11", src)
+    """Historical: verify v2.1.11 entries exist in changelogs."""
 
     def test_changelog_has_v211_entry(self):
         src = _read_src("CHANGELOG.md")
@@ -4607,9 +4596,6 @@ class TestV211VersionBump(unittest.TestCase):
     def test_onion_claw_changelog_has_v211_entry(self):
         src = _read_oc_src("CHANGELOG.md")
         self.assertIn("## [2.1.11]", src)
-
-    def test_onion_claw_sicry_version(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.11")
 
 
 class TestV211Fixes(unittest.TestCase):
@@ -4668,6 +4654,95 @@ class TestV211Fixes(unittest.TestCase):
         arch_section = src[arch_start:arch_start + 2000]
         self.assertIn("sicry", arch_section.lower(),
                       "Architecture section must mention sicry ([2] v2.1.11)")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# v2.1.12  Tests
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestV212VersionBump(unittest.TestCase):
+    """Verify that all version strings were bumped to 2.1.12."""
+
+    def test_sicry_version(self):
+        self.assertEqual(SICRY.__version__, "2.1.12")
+
+    def test_pyproject_version(self):
+        src = _read_src("pyproject.toml")
+        self.assertIn('version = "2.1.12"', src)
+
+    def test_sync_sicry_version(self):
+        src = _read_oc_src("sync_sicry.py")
+        self.assertIn("sync_sicry 2.1.12", src)
+
+    def test_changelog_has_v212_entry(self):
+        src = _read_src("CHANGELOG.md")
+        self.assertIn("## [2.1.12]", src)
+
+    def test_onion_claw_changelog_has_v212_entry(self):
+        src = _read_oc_src("CHANGELOG.md")
+        self.assertIn("## [2.1.12]", src)
+
+    def test_onion_claw_sicry_version(self):
+        self.assertEqual(SICRY_OC.__version__, "2.1.12")
+
+
+class TestV212Fixes(unittest.TestCase):
+    """v2.1.12: BUG-6 -- --out permission denied exits 1 (not 0), both paths."""
+
+    # ── main pipeline --out / --output-dir handler ───────────────────────────
+    def test_main_out_makedirs_inside_try(self):
+        """BUG-6: os.makedirs(output_dir) must be INSIDE the try block."""
+        src = _read_oc_src("pipeline.py")
+        lines = src.splitlines()
+        try_lineno   = next(i for i, l in enumerate(lines) if "    try:" in l
+                            and i > lines.index(next(l2 for l2 in lines if "if args.out or args.output_dir" in l2)))
+        makedirs_lineno = next(i for i, l in enumerate(lines) if "os.makedirs(args.output_dir" in l
+                               and i > try_lineno)
+        # makedirs must come AFTER the try: line
+        self.assertGreater(makedirs_lineno, try_lineno,
+                           "BUG-6: os.makedirs(args.output_dir) must be inside the try block")
+
+    def test_main_out_handler_exits_1_on_error(self):
+        """BUG-6: main --out handler must call sys.exit(1) after error."""
+        src = _read_oc_src("pipeline.py")
+        msg = "could not write output file"
+        parts = src.split(msg)
+        self.assertGreater(len(parts), 1,
+                           "pipeline --out error message not found (BUG-6)")
+        for part in parts[1:]:
+            self.assertIn("sys.exit(1)", part[:150],
+                          "BUG-6: every 'could not write output file' handler must call sys.exit(1)")
+
+    # ── watch-check --output-dir handler ─────────────────────────────────
+    def test_watch_check_output_dir_has_try_except(self):
+        """BUG-6: watch-check --output-dir write must be inside try/except."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("[BUG-6 v2.1.12]", src,
+                      "pipeline.py watch-check output-dir must have BUG-6 fix comment")
+
+    def test_watch_check_output_dir_exits_1_on_error(self):
+        """BUG-6: watch-check --output-dir handler must call sys.exit(1) on write error."""
+        src = _read_oc_src("pipeline.py")
+        # Count total occurrences of 'could not write output file' -- must be >=2
+        # (one for main --out path, one for watch-check path)
+        count = src.count("could not write output file")
+        self.assertGreaterEqual(count, 2,
+            "BUG-6: both --out and --watch-check --output-dir must have 'could not write output file' message")
+
+    def test_watch_check_makedirs_inside_try(self):
+        """BUG-6: in watch-check handler, os.makedirs must be inside try, not outside."""
+        src = _read_oc_src("pipeline.py")
+        # The BUG-6 comment immediately precedes the fixed if args.output_dir block
+        bug6_idx = src.find("[BUG-6 v2.1.12]")
+        self.assertGreater(bug6_idx, 0)
+        # The try: must appear before makedirs in this section
+        section = src[bug6_idx:bug6_idx + 600]
+        try_pos     = section.find("try:")
+        makedirs_pos = section.find("os.makedirs")
+        self.assertGreater(try_pos, 0,
+                           "BUG-6: try: not found in watch-check output-dir section")
+        self.assertGreater(makedirs_pos, try_pos,
+                           "BUG-6: os.makedirs must be inside try: in watch-check handler")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -7,6 +7,24 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
+## [2.1.12] — 2026-03-16
+
+### Fixed
+- **[BUG-6]** `--out` / `--output-dir` permission-denied regression (crept back
+  in v2.1.9): two independent paths had unguarded file writes.
+  - **`pipeline.py` main `--out` handler**: `os.makedirs(output_dir)` was called
+    *outside* the `try/except` block; a PermissionError creating the directory
+    produced a raw Python traceback instead of the clean `"could not write output
+    file"` message.  `makedirs` is now inside `try:`.
+  - **`pipeline.py --watch-check --output-dir` handler**: the `os.makedirs` +
+    `open()` write block had no `try/except` at all.  A PermissionError would
+    propagate as an unhandled exception and abort the watch-check loop before
+    `sys.exit(1)` could be called.  Both calls are now wrapped in a unified
+    `try/except Exception` that prints `"could not write output file: …"` to
+    stderr and exits 1, consistent with the main pipeline path.
+
+---
+
 ## [2.1.11] — 2026-03-16
 
 ### Changed
