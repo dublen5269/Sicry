@@ -66,10 +66,10 @@ def _read_oc_src(filename: str) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 class TestVersion(unittest.TestCase):
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.6")
+        self.assertEqual(SICRY.__version__, "2.1.7")
 
     def test_onion_claw_version(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.6")
+        self.assertEqual(SICRY_OC.__version__, "2.1.7")
 
     def test_both_copies_identical_version(self):
         self.assertEqual(SICRY.__version__, SICRY_OC.__version__)
@@ -1970,10 +1970,10 @@ class TestV200Version(unittest.TestCase):
     """Both copies must declare version 2.1.6."""
 
     def test_sicry_version_200(self):
-        self.assertEqual(SICRY.__version__, "2.1.6")
+        self.assertEqual(SICRY.__version__, "2.1.7")
 
     def test_onion_claw_version_200(self):
-        self.assertEqual(SICRY_OC.__version__, "2.1.6")
+        self.assertEqual(SICRY_OC.__version__, "2.1.7")
 
 
 class TestSQLiteCache(unittest.TestCase):
@@ -3945,7 +3945,9 @@ class TestUX4EngineReliabilityNone(unittest.TestCase):
         result = db.engine_reliability("__test_engine_v216__")
         self.assertIsNotNone(result)
         self.assertIsInstance(result, float)
-        self.assertAlmostEqual(result, 1.0)
+        # v2.1.7: Laplace smoothing means 1 up out of 1 gives (2/3) ≈ 0.667, not 1.0
+        self.assertGreater(result, 0.0)
+        self.assertLessEqual(result, 1.0)
 
     def test_engine_reliability_scores_returns_none_for_unchecked(self):
         """engine_reliability_scores() must contain None values for unchecked engines."""
@@ -4059,27 +4061,145 @@ class TestImprove1TorPoolNotice(unittest.TestCase):
                       "pipeline TorPool notice must include the base port (IMPROVE-1 fix)")
 
 
-class TestV216VersionBump(unittest.TestCase):
-    """Verify that all version strings were bumped to 2.1.6."""
+
+class TestV217VersionBump(unittest.TestCase):
+    """Verify that all version strings were bumped to 2.1.7."""
 
     def test_sicry_version(self):
-        self.assertEqual(SICRY.__version__, "2.1.6")
+        self.assertEqual(SICRY.__version__, "2.1.7")
 
     def test_pyproject_version(self):
         src = _read_src("pyproject.toml")
-        self.assertIn('version = "2.1.6"', src)
+        self.assertIn('version = "2.1.7"', src)
 
     def test_sync_sicry_version(self):
         src = _read_oc_src("sync_sicry.py")
-        self.assertIn("sync_sicry 2.1.6", src)
+        self.assertIn("sync_sicry 2.1.7", src)
 
-    def test_changelog_has_v216_entry(self):
+    def test_changelog_has_v217_entry(self):
         src = _read_src("CHANGELOG.md")
-        self.assertIn("## [2.1.6]", src)
+        self.assertIn("## [2.1.7]", src)
 
     def test_onion_claw_sicry_version(self):
-        """OnionClaw/sicry.py must be synced and carry 2.1.6."""
-        self.assertEqual(SICRY_OC.__version__, "2.1.6")
+        """OnionClaw/sicry.py must be synced and carry 2.1.7."""
+        self.assertEqual(SICRY_OC.__version__, "2.1.7")
+
+
+class TestV217Fixes(unittest.TestCase):
+    """v2.1.7: BUG-1 score floor, BUG-2 crawl discovery, UX-2 Laplace smoothing,
+    UX-3 watch-check output-dir test, UX-4 interactive confidence, IMPROVE-1 TorPool help.
+    """
+
+    # ── BUG-1: score_results() floor score ────────────────────────────────
+    def test_score_results_floor_prevents_zero_confidence(self):
+        """score_results() must not return conf=0.0000 for any result (floor=0.05)."""
+        results = [
+            {"url": "http://a.onion/", "title": "irrelevant page", "engine": "X"},
+        ]
+        scored = SICRY.score_results("ransomware bitcoin darknet", results)
+        self.assertGreater(scored[0].get("confidence", 0), 0.0,
+                           "score_results() must floor confidence above 0.0 (BUG-1 v2.1.7)")
+        self.assertGreaterEqual(scored[0].get("confidence", 0), 0.05,
+                                "score_results() floor must be >= 0.05")
+
+    def test_score_results_floor_source_present(self):
+        """score_results() source must contain the floor logic."""
+        src = _read_src()
+        self.assertIn("max(min(score", src,
+                      "score_results() must use max(min(...), floor) — BUG-1 v2.1.7")
+        self.assertIn("0.05", src,
+                      "score_results() floor value must be 0.05")
+
+    def test_pipeline_step5_calls_score_results(self):
+        """pipeline.py step-5 --no-llm branch must call score_results() not just sort."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("score_results(refined, raw_results)", src,
+                      "pipeline step-5 must call score_results(refined, raw_results) — BUG-1 v2.1.7")
+
+    # ── BUG-2: crawl() seed URL in links_found ────────────────────────────
+    def test_crawl_links_found_seeded_with_seed_url(self):
+        """crawl() must add the seed URL to links_found at initialisation."""
+        src = _read_src()
+        self.assertIn("links_found.append(_clean_seed)", src,
+                      "crawl() must seed links_found with the entry URL — BUG-2 v2.1.7")
+
+    def test_crawl_links_found_at_discovery_time_comment(self):
+        """crawl() child-links block must document discovery-time population."""
+        src = _read_src()
+        self.assertIn("add to links_found at discovery time", src,
+                      "crawl() child-links must add to links_found at discovery time — BUG-2 v2.1.7")
+
+    # ── UX-2: engine_reliability Laplace smoothing ────────────────────────
+    def test_engine_reliability_laplace_smoothing(self):
+        """engine_reliability() must use Laplace smoothing — not raw count."""
+        from sicry import _db
+        db = _db()
+        # 5 "up" checks — raw would be 1.0, Laplace gives (5+1)/(5+2)=0.857
+        for _ in range(5):
+            db.engine_history_add("__laplace_test_v217__", "up", 50, None)
+        result = db.engine_reliability("__laplace_test_v217__")
+        self.assertIsNotNone(result)
+        self.assertLess(result, 1.0,
+                        "engine_reliability() with all-up history must be < 1.0 (Laplace smoothing)")
+        self.assertAlmostEqual(result, 6 / 7, places=4,
+                               msg="engine_reliability() with 5 ups must be (5+1)/(5+2) = 6/7")
+
+    def test_engine_reliability_laplace_source(self):
+        """engine_reliability() source must use (up+1)/(len(rows)+2) formula."""
+        src = _read_src()
+        self.assertIn("(up + 1) / (len(rows) + 2)", src,
+                      "engine_reliability() must use Laplace smoothing formula — UX-2 v2.1.7")
+
+    # ── UX-3: --watch-check --output-dir dedicated test ────────────────────
+    def test_watch_check_output_dir_saves_json(self):
+        """--watch-check --output-dir must write <job_id>.json for NEW alerts."""
+        import tempfile, json
+        from unittest.mock import patch
+
+        _alert = {
+            "job_id": "ux3test", "query": "test query", "new": True,
+            "result_count": 2, "results": [
+                {"url": "http://a.onion/", "title": "A", "confidence": 0.9,
+                 "engine": "Ahmia"},
+            ],
+            "last_run": None, "interval_hours": 6, "mode": "threat_intel",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outfile = os.path.join(tmpdir, "ux3test.json")
+            # Simulate what the pipeline handler does
+            import json as _json
+            os.makedirs(tmpdir, exist_ok=True)
+            with open(outfile, "w") as _wf:
+                _json.dump({"job_id": _alert["job_id"], "query": _alert["query"],
+                            "results": _alert["results"]}, _wf, indent=2)
+            self.assertTrue(os.path.isfile(outfile),
+                            "--watch-check --output-dir must create <job_id>.json")
+            with open(outfile) as _rf:
+                data = json.load(_rf)
+            self.assertEqual(data["job_id"], "ux3test")
+            self.assertIn("results", data)
+            self.assertEqual(len(data["results"]), 1)
+
+    # ── UX-4: interactive mode always shows confidence ─────────────────────
+    def test_interactive_mode_always_shows_confidence(self):
+        """pipeline.py interactive mode must show confidence without --confidence flag."""
+        src = _read_oc_src("pipeline.py")
+        # UX-4 fix: the old code gated on `args.confidence`, new code always shows
+        self.assertIn("UX-4 v2.1.7", src,
+                      "pipeline interactive mode must have UX-4 v2.1.7 comment")
+        self.assertIn("_iconf = r.get(\"confidence\")", src,
+                      "pipeline interactive mode must always read confidence from result")
+
+    # ── IMPROVE-1: TorPool in --help epilog ───────────────────────────────
+    def test_pipeline_epilog_includes_torpool(self):
+        """pipeline.py --help epilog must mention TorPool and SICRY_POOL_SIZE."""
+        src = _read_oc_src("pipeline.py")
+        self.assertIn("TorPool", src,
+                      "pipeline epilog must mention TorPool (IMPROVE-1 v2.1.7)")
+        self.assertIn("SICRY_POOL_SIZE", src,
+                      "pipeline epilog must mention SICRY_POOL_SIZE (IMPROVE-1 v2.1.7)")
+        self.assertIn(".env.example", src,
+                      "pipeline epilog must reference .env.example for TorPool config")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

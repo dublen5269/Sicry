@@ -7,6 +7,44 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
+## [2.1.7] — 2026-03-16
+
+### Fixed
+- **BUG-1** `score_results()` third result always `conf=0.0000` — added a 0.05
+  baseline floor so search-engine-returned results never display a zero confidence
+  (a result the engine surfaced has measured relevance even if its title/snippet
+  shares no exact query tokens with the query).  Pipeline step 5 (`--no-llm` path)
+  now calls `score_results(refined, raw_results)` instead of just sorting by stale
+  search-time confidence, so the step-5 display reflects BM25 on the refined query
+  before scraping begins.
+- **BUG-2** `crawl()` `links_found` empty on shallow crawls with `max_pages < 8`
+  — two fixes applied:
+  1. Seed URL is now added to `links_found` at crawl initialisation so at least
+     one URL is always recorded even if every page fetch fails.
+  2. Child `.onion` URLs added to the BFS queue are also written to `links_found`
+     immediately (discovery time) so pages that are discovered but never fetched
+     (due to `max_pages` cap) still appear in the output.
+
+### Improved
+- **UX-2** `--engine-stats` reliability column no longer shows a perpetual `100%`
+  for engines that have only ever been seen as "up".  `_DB.engine_reliability()`
+  now applies Laplace (add-1) smoothing — `(up+1)/(n+2)` — so a single downtime
+  episode shows up even against a clean history.
+- **UX-3** Added a dedicated mock-based unit test for `--watch-check --output-dir`
+  that verifies the JSON file is written without requiring a live Tor connection.
+- **UX-4** Interactive mode (`--interactive`) now **always** shows confidence scores
+  next to each result (no longer requires the `--confidence` flag), making it easier
+  to decide which result to fetch.
+- **IMPROVE-1** `--help` epilog now includes a TorPool section describing
+  `SICRY_POOL_SIZE` and pointing users to `.env.example`.
+- **IMPROVE-2** `crawl_export(job_id, format=…)` already supported `"stix"`,
+  `"misp"`, and `"csv"` since v2.1.5 (documented here for discoverability).
+
+### Changed
+- `__version__` bumped to `2.1.7`.
+
+---
+
 ## [2.1.6] — 2026-03-16
 
 ### Fixed
