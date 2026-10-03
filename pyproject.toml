@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Internet",
 ]
 dependencies = [
-    "requests[socks]>=2.31",
+    "requests[socks]>=2.33.1",
     "beautifulsoup4>=4.12",
     "python-dotenv>=1.0",
     "stem>=1.8",
